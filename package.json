@@ -1,0 +1,35 @@
+{
+  "name": "x-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for the X (Twitter) API",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "x-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "twitter",
+    "x",
+    "api",
+    "claude",
+    "model-context-protocol"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "dotenv": "^16.4.7",
+    "oauth-1.0a": "^2.2.6",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/oauth": "^0.9.6",
+    "typescript": "^5.7.0"
+  }
+}
