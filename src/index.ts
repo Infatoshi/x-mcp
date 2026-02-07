@@ -3,10 +3,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 import { z } from "zod";
 import { XApiClient } from "./x-api.js";
 
-dotenv.config();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, "..", ".env") });
 
 function requireEnv(name: string): string {
   const value = process.env[name];
