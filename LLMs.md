@@ -275,7 +275,7 @@ Once connected, you have access to these tools (prefixed with `mcp__x-twitter__`
 
 ### Writing
 - **post_tweet** -- Post text, polls, or media. Parameters: `text` (required), `poll_options`, `poll_duration_minutes`, `media_ids`
-- **reply_to_tweet** -- Reply to a tweet. Parameters: `tweet_id` (ID or URL), `text`, `media_ids`
+- **reply_to_tweet** -- Reply to a tweet. **Restricted**: only works if the original author @mentioned you or quoted your post (X API policy, Feb 2024). Use `quote_tweet` as a workaround. Parameters: `tweet_id` (ID or URL), `text`, `media_ids`
 - **quote_tweet** -- Quote retweet. Parameters: `tweet_id` (ID or URL), `text`, `media_ids`
 - **delete_tweet** -- Delete a tweet. Parameters: `tweet_id` (ID or URL)
 
@@ -330,6 +330,7 @@ To post with an image:
 |-------|-------|-----|
 | 403 "oauth1-permissions" | Access Token has Read-only permissions | Enable "Read and write" in app settings, then **regenerate** Access Token and Secret |
 | 401 Unauthorized | Bad credentials | Verify all 5 values in `.env` are correct, no extra whitespace |
+| Reply fails / restriction error | X restricts programmatic replies (Feb 2024) | Can only reply if original author @mentioned you or quoted your post. Use `quote_tweet` instead |
 | 429 Rate Limited | Too many requests | Error includes reset time -- wait until then |
 | "Missing required environment variable" | `.env` file not found or incomplete | Ensure `.env` exists in project root with all 5 variables |
 | Server connected but tools not visible | MCP server scope issue | Re-add with `claude mcp add --scope user`, restart Claude Code |

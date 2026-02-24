@@ -250,6 +250,9 @@ Double-check that all 5 credentials in your `.env` are correct and that there ar
 ### 429 Rate Limited
 The error message includes exactly when the rate limit resets. Wait until then, or reduce request frequency.
 
+### Reply fails with a permissions/restriction error
+As of Feb 2024, X restricts programmatic replies via the API. You can only reply if the original author @mentions you or quotes your post. This applies to Free, Basic, Pro, and Pay-Per-Use tiers (Enterprise is exempt). Use `quote_tweet` as a workaround.
+
 ### Server shows "Connected" but tools aren't used
 Make sure you added the server with the correct scope (user/global, not project-scoped if you want it everywhere), then restart your client.
 

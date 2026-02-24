@@ -25,6 +25,8 @@ const client = new XApiClient({
   accessToken: requireEnv("X_ACCESS_TOKEN"),
   accessTokenSecret: requireEnv("X_ACCESS_TOKEN_SECRET"),
   bearerToken: requireEnv("X_BEARER_TOKEN"),
+  oauth2ClientId: process.env.X_OAUTH2_CLIENT_ID,
+  oauth2ClientSecret: process.env.X_OAUTH2_CLIENT_SECRET,
 });
 
 const server = new McpServer({
@@ -79,7 +81,7 @@ server.tool(
 
 server.tool(
   "reply_to_tweet",
-  "Reply to an existing post on X. Provide the tweet ID or URL to reply to.",
+  "Reply to an existing post on X. Provide the tweet ID or URL to reply to. NOTE: As of Feb 2024, X restricts programmatic replies -- you can only reply if the original author @mentions you or quotes your post. Otherwise the API will return an error. Consider using quote_tweet as an alternative.",
   {
     tweet_id: z.string().describe("The tweet ID or URL to reply to"),
     text: z.string().describe("The reply text"),
@@ -305,6 +307,75 @@ server.tool(
     try {
       const id = parseTweetId(tweet_id);
       const { result, rateLimit } = await client.retweet(id);
+      return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+    } catch (e: unknown) {
+      return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+    }
+  },
+);
+
+// ============================================================
+// BOOKMARKS (requires OAuth 2.0 -- run setup_oauth2 first)
+// ============================================================
+
+server.tool(
+  "setup_oauth2",
+  "One-time setup: Authorize OAuth 2.0 for bookmark access. Opens a browser for X login. Required before using get_bookmarks, bookmark_tweet, or unbookmark_tweet.",
+  {},
+  async () => {
+    try {
+      const message = await client.getOAuth2Manager().authorize();
+      return { content: [{ type: "text", text: message }] };
+    } catch (e: unknown) {
+      return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "get_bookmarks",
+  "Fetch the authenticated user's bookmarked posts. Returns tweets with author info and metrics.",
+  {
+    max_results: z.number().optional().describe("Number of results (1-100, default 10)"),
+    next_token: z.string().optional().describe("Pagination token from previous response"),
+  },
+  async ({ max_results, next_token }) => {
+    try {
+      const { result, rateLimit } = await client.getBookmarks(max_results, next_token);
+      return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+    } catch (e: unknown) {
+      return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "bookmark_tweet",
+  "Bookmark a post on X.",
+  {
+    tweet_id: z.string().describe("The tweet ID or URL to bookmark"),
+  },
+  async ({ tweet_id }) => {
+    try {
+      const id = parseTweetId(tweet_id);
+      const { result, rateLimit } = await client.bookmarkTweet(id);
+      return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+    } catch (e: unknown) {
+      return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "unbookmark_tweet",
+  "Remove a bookmark from a post on X.",
+  {
+    tweet_id: z.string().describe("The tweet ID or URL to unbookmark"),
+  },
+  async ({ tweet_id }) => {
+    try {
+      const id = parseTweetId(tweet_id);
+      const { result, rateLimit } = await client.unbookmarkTweet(id);
       return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
     } catch (e: unknown) {
       return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };

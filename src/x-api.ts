@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import OAuth from "oauth-1.0a";
+import { OAuth2Manager } from "./oauth2.js";
 
 const API_BASE = "https://api.x.com/2";
 const UPLOAD_BASE = "https://upload.twitter.com/1.1";
@@ -27,6 +28,8 @@ export interface XApiConfig {
   accessToken: string;
   accessTokenSecret: string;
   bearerToken: string;
+  oauth2ClientId?: string;
+  oauth2ClientSecret?: string;
 }
 
 export class XApiClient {
@@ -34,6 +37,7 @@ export class XApiClient {
   private token: OAuth.Token;
   private bearerToken: string;
   private authenticatedUserId: string | null = null;
+  private oauth2: OAuth2Manager;
 
   constructor(private config: XApiConfig) {
     this.oauth = new OAuth({
@@ -45,6 +49,33 @@ export class XApiClient {
     });
     this.token = { key: config.accessToken, secret: config.accessTokenSecret };
     this.bearerToken = config.bearerToken;
+    this.oauth2 = new OAuth2Manager(
+      config.oauth2ClientId || config.apiKey,
+      config.oauth2ClientSecret || config.apiSecret,
+    );
+  }
+
+  getOAuth2Manager(): OAuth2Manager {
+    return this.oauth2;
+  }
+
+  private async oauth2Fetch(
+    url: string,
+    method: string,
+    body?: unknown,
+  ): Promise<Response> {
+    const accessToken = await this.oauth2.getAccessToken();
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${accessToken}`,
+    };
+    if (body) {
+      headers["Content-Type"] = "application/json";
+    }
+    const init: RequestInit = { method, headers };
+    if (body) {
+      init.body = JSON.stringify(body);
+    }
+    return fetch(url, init);
   }
 
   // --- Internal helpers ---
@@ -75,11 +106,15 @@ export class XApiClient {
     body?: unknown,
     contentType?: string,
   ): Promise<Response> {
-    const requestData = { url, method };
-    const authHeader = this.oauth.toHeader(this.oauth.authorize(requestData, this.token));
+    // For form-urlencoded bodies, include params in OAuth signature per spec.
+    // JSON and multipart (FormData) bodies are excluded from the signature.
+    const isFormEncoded = contentType === "application/x-www-form-urlencoded";
+    const signatureData = isFormEncoded && body
+      ? body as Record<string, string>
+      : undefined;
 
     const headers: Record<string, string> = {
-      Authorization: authHeader.Authorization,
+      ...this.getOAuthHeaders(url, method, signatureData),
     };
     if (contentType) {
       headers["Content-Type"] = contentType;
@@ -91,6 +126,8 @@ export class XApiClient {
     if (body) {
       if (body instanceof FormData) {
         init.body = body;
+      } else if (isFormEncoded) {
+        init.body = new URLSearchParams(body as Record<string, string>).toString();
       } else {
         init.body = JSON.stringify(body);
       }
@@ -163,9 +200,18 @@ export class XApiClient {
     poll_duration_minutes?: number;
     media_ids?: string[];
   }) {
-    const body: Record<string, unknown> = { text: params.text };
+    // Auto-append agent disclosure to all outgoing tweets
+    const model = process.env.CLAUDE_MODEL || "Claude Opus 4.6";
+    const disclosure = `\n\n[${model} on behalf of @elliotarledge]`;
+    const text = params.text.includes("on behalf of @elliotarledge")
+      ? params.text  // avoid double-appending
+      : params.text + disclosure;
+    const body: Record<string, unknown> = { text };
 
     if (params.reply_to) {
+      // NOTE: X API restricts programmatic replies (Feb 2024). Replies only
+      // succeed if the original author @mentioned you or quoted your post.
+      // Non-qualifying replies will fail. Use quote_tweet_id as a workaround.
       body.reply = { in_reply_to_tweet_id: params.reply_to };
     }
     if (params.quote_tweet_id) {
@@ -192,7 +238,7 @@ export class XApiClient {
 
   async getTweet(tweetId: string) {
     const params = new URLSearchParams({
-      "tweet.fields": "created_at,public_metrics,author_id,conversation_id,in_reply_to_user_id,referenced_tweets,attachments,entities,lang",
+      "tweet.fields": "created_at,public_metrics,author_id,conversation_id,in_reply_to_user_id,referenced_tweets,attachments,entities,lang,note_tweet",
       expansions: "author_id,referenced_tweets.id,attachments.media_keys",
       "user.fields": "name,username,verified,profile_image_url,public_metrics",
       "media.fields": "url,preview_image_url,type,width,height,alt_text",
@@ -206,7 +252,7 @@ export class XApiClient {
     const params = new URLSearchParams({
       query,
       max_results: Math.min(Math.max(maxResults, 10), 100).toString(),
-      "tweet.fields": "created_at,public_metrics,author_id,conversation_id,entities,lang",
+      "tweet.fields": "created_at,public_metrics,author_id,conversation_id,entities,lang,note_tweet",
       expansions: "author_id,attachments.media_keys",
       "user.fields": "name,username,verified,profile_image_url",
       "media.fields": "url,preview_image_url,type",
@@ -241,7 +287,7 @@ export class XApiClient {
   async getTimeline(userId: string, maxResults: number = 10, nextToken?: string) {
     const params = new URLSearchParams({
       max_results: Math.min(Math.max(maxResults, 5), 100).toString(),
-      "tweet.fields": "created_at,public_metrics,author_id,conversation_id,entities,lang",
+      "tweet.fields": "created_at,public_metrics,author_id,conversation_id,entities,lang,note_tweet",
       expansions: "author_id,attachments.media_keys,referenced_tweets.id",
       "user.fields": "name,username,verified",
       "media.fields": "url,preview_image_url,type",
@@ -257,7 +303,7 @@ export class XApiClient {
     const userId = await this.getAuthenticatedUserId();
     const params = new URLSearchParams({
       max_results: Math.min(Math.max(maxResults, 5), 100).toString(),
-      "tweet.fields": "created_at,public_metrics,author_id,conversation_id,entities",
+      "tweet.fields": "created_at,public_metrics,author_id,conversation_id,entities,note_tweet",
       expansions: "author_id",
       "user.fields": "name,username,verified",
     });
@@ -317,31 +363,29 @@ export class XApiClient {
     mimeType: string,
     mediaCategory: string = "tweet_image",
   ) {
+    const uploadUrl = `${UPLOAD_BASE}/media/upload.json`;
     const buffer = Buffer.from(mediaData, "base64");
     const totalBytes = buffer.length;
 
     // INIT
-    const initForm = new URLSearchParams({
-      command: "INIT",
-      media_type: mimeType,
-      total_bytes: totalBytes.toString(),
-      media_category: mediaCategory,
-    });
-    const initRes = await fetch(`${UPLOAD_BASE}/media/upload.json`, {
-      method: "POST",
-      headers: {
-        ...this.getOAuthHeaders(`${UPLOAD_BASE}/media/upload.json`, "POST"),
-        "Content-Type": "application/x-www-form-urlencoded",
+    const initRes = await this.oauthFetch(
+      uploadUrl,
+      "POST",
+      {
+        command: "INIT",
+        media_type: mimeType,
+        total_bytes: totalBytes.toString(),
+        media_category: mediaCategory,
       },
-      body: initForm.toString(),
-    });
+      "application/x-www-form-urlencoded",
+    );
     const { result: initData } = await this.handleResponse<{ media_id_string: string }>(
       initRes,
       "uploadMedia:INIT",
     );
     const mediaId = initData.media_id_string;
 
-    // APPEND -- upload in 1MB chunks
+    // APPEND -- upload in 1MB chunks (multipart, params excluded from OAuth sig)
     const chunkSize = 1024 * 1024;
     for (let i = 0; i * chunkSize < totalBytes; i++) {
       const chunk = buffer.subarray(i * chunkSize, (i + 1) * chunkSize);
@@ -351,11 +395,7 @@ export class XApiClient {
       formData.append("segment_index", i.toString());
       formData.append("media_data", chunk.toString("base64"));
 
-      const appendRes = await fetch(`${UPLOAD_BASE}/media/upload.json`, {
-        method: "POST",
-        headers: this.getOAuthHeaders(`${UPLOAD_BASE}/media/upload.json`, "POST"),
-        body: formData,
-      });
+      const appendRes = await this.oauthFetch(uploadUrl, "POST", formData);
 
       if (!appendRes.ok) {
         const text = await appendRes.text();
@@ -364,27 +404,62 @@ export class XApiClient {
     }
 
     // FINALIZE
-    const finalizeForm = new URLSearchParams({
-      command: "FINALIZE",
-      media_id: mediaId,
-    });
-    const finalizeRes = await fetch(`${UPLOAD_BASE}/media/upload.json`, {
-      method: "POST",
-      headers: {
-        ...this.getOAuthHeaders(`${UPLOAD_BASE}/media/upload.json`, "POST"),
-        "Content-Type": "application/x-www-form-urlencoded",
+    const finalizeRes = await this.oauthFetch(
+      uploadUrl,
+      "POST",
+      {
+        command: "FINALIZE",
+        media_id: mediaId,
       },
-      body: finalizeForm.toString(),
-    });
+      "application/x-www-form-urlencoded",
+    );
     const finalizeResult = await this.handleResponse(finalizeRes, "uploadMedia:FINALIZE");
 
     return { mediaId, ...finalizeResult };
   }
 
-  private getOAuthHeaders(url: string, method: string): Record<string, string> {
-    const requestData = { url, method };
+  private getOAuthHeaders(url: string, method: string, data?: Record<string, string>): Record<string, string> {
+    const requestData: { url: string; method: string; data?: Record<string, string> } = { url, method };
+    if (data) {
+      requestData.data = data;
+    }
     const authHeader = this.oauth.toHeader(this.oauth.authorize(requestData, this.token));
     return { Authorization: authHeader.Authorization };
+  }
+
+  // --- Bookmarks ---
+
+  async getBookmarks(maxResults: number = 10, nextToken?: string) {
+    const userId = await this.getAuthenticatedUserId();
+    const params = new URLSearchParams({
+      max_results: Math.min(Math.max(maxResults, 1), 100).toString(),
+      "tweet.fields": "created_at,public_metrics,author_id,conversation_id,entities,lang,note_tweet",
+      expansions: "author_id,attachments.media_keys",
+      "user.fields": "name,username,verified,profile_image_url",
+      "media.fields": "url,preview_image_url,type",
+    });
+    if (nextToken) params.set("pagination_token", nextToken);
+
+    const url = `${API_BASE}/users/${userId}/bookmarks?${params}`;
+    const response = await this.oauth2Fetch(url, "GET");
+    return this.handleResponse(response, "getBookmarks");
+  }
+
+  async bookmarkTweet(tweetId: string) {
+    const userId = await this.getAuthenticatedUserId();
+    const response = await this.oauth2Fetch(`${API_BASE}/users/${userId}/bookmarks`, "POST", {
+      tweet_id: tweetId,
+    });
+    return this.handleResponse(response, "bookmarkTweet");
+  }
+
+  async unbookmarkTweet(tweetId: string) {
+    const userId = await this.getAuthenticatedUserId();
+    const response = await this.oauth2Fetch(
+      `${API_BASE}/users/${userId}/bookmarks/${tweetId}`,
+      "DELETE",
+    );
+    return this.handleResponse(response, "unbookmarkTweet");
   }
 
   // --- Metrics ---
