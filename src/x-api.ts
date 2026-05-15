@@ -473,4 +473,24 @@ export class XApiClient {
     const response = await this.oauthFetch(url, "GET");
     return this.handleResponse(response, "getTweetMetrics");
   }
+
+  // --- Image utilities ---
+  async fetchImageAsBase64(url: string): Promise<{ dataUrl: string; mimeType: string }> {
+    const ALLOWED_HOSTS = ['pbs.twimg.com', 'pbs.twitter.com', 'ton.twimg.com'];
+    const parsed = new URL(url);
+    if (!ALLOWED_HOSTS.includes(parsed.hostname)) {
+      throw new Error(
+        'fetchImageAsBase64: URL host not allowed. Must be a known X/Twitter image CDN domain.'
+      );
+    }
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error('fetchImageAsBase64: HTTP ' + response.status + ' for ' + url);
+    }
+    const contentType = response.headers.get('content-type') || 'image/jpeg';
+    const mimeType = contentType.split(';')[0].trim();
+    const buffer = await response.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString('base64');
+    return { dataUrl: 'data:' + mimeType + ';base64,' + base64, mimeType };
+  }
 }
