@@ -435,6 +435,27 @@ server.tool(
   },
 );
 
+
+// ============================================================
+// IMAGE PROXY
+// ============================================================
+
+server.tool(
+  "get_image_as_base64",
+  "Fetch an image from an X/Twitter CDN URL (pbs.twimg.com, pbs.twitter.com, or ton.twimg.com) and return it as a base64 data URL. Useful for embedding profile images or media thumbnails in sandboxed contexts where direct external URLs are blocked.",
+  {
+    url: z.string().describe("The image URL to fetch (must be from pbs.twimg.com, pbs.twitter.com, or ton.twimg.com)"),
+  },
+  async ({ url }) => {
+    try {
+      const result = await client.fetchImageAsBase64(url);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (e: unknown) {
+      return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+    }
+  },
+);
+
 // ============================================================
 // START SERVER
 // ============================================================
