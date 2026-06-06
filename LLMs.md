@@ -109,7 +109,7 @@ For read-only Xquik mode, set these values instead of `X_BEARER_TOKEN`:
 
 ```
 XQUIK_API_KEY=<Xquik API key>
-XQUIK_BASE_URL=https://xquik.com
+XQUIK_BASE_URL=https://xquik.com/api/v1
 ```
 
 With `XQUIK_API_KEY` set, `get_tweet`, `search_tweets`, `get_user`,

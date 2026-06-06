@@ -60,7 +60,7 @@ export class XApiClient {
       config.oauth2ClientSecret || config.apiSecret || "",
     );
     this.xquikApiKey = config.xquikApiKey;
-    this.xquikBaseUrl = (config.xquikBaseUrl || "https://xquik.com").replace(/\/+$/, "");
+    this.xquikBaseUrl = (config.xquikBaseUrl || "https://xquik.com/api/v1").replace(/\/+$/, "");
   }
 
   getOAuth2Manager(): OAuth2Manager {
@@ -166,7 +166,8 @@ export class XApiClient {
       throw new Error("Missing XQUIK_API_KEY.");
     }
 
-    const url = new URL(path, this.xquikBaseUrl);
+    const baseUrl = `${this.xquikBaseUrl}/`;
+    const url = new URL(path.replace(/^\/+/, ""), baseUrl);
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined && value !== "") {
         url.searchParams.set(key, String(value));

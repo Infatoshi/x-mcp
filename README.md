@@ -98,7 +98,7 @@ Set `XQUIK_API_KEY` in `.env` or in your MCP client config:
 
 ```
 XQUIK_API_KEY=your_xquik_api_key
-XQUIK_BASE_URL=https://xquik.com
+XQUIK_BASE_URL=https://xquik.com/api/v1
 ```
 
 When `XQUIK_API_KEY` is set, these tools read through Xquik:
