@@ -11,22 +11,21 @@ import { XApiClient } from "./x-api.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, "..", ".env") });
 
-function requireEnv(name: string): string {
+function optionalEnv(name: string): string | undefined {
   const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}. See .env.example for required variables.`);
-  }
-  return value;
+  return value && value.trim().length > 0 ? value : undefined;
 }
 
 const client = new XApiClient({
-  apiKey: requireEnv("X_API_KEY"),
-  apiSecret: requireEnv("X_API_SECRET"),
-  accessToken: requireEnv("X_ACCESS_TOKEN"),
-  accessTokenSecret: requireEnv("X_ACCESS_TOKEN_SECRET"),
-  bearerToken: requireEnv("X_BEARER_TOKEN"),
-  oauth2ClientId: process.env.X_OAUTH2_CLIENT_ID,
-  oauth2ClientSecret: process.env.X_OAUTH2_CLIENT_SECRET,
+  apiKey: optionalEnv("X_API_KEY"),
+  apiSecret: optionalEnv("X_API_SECRET"),
+  accessToken: optionalEnv("X_ACCESS_TOKEN"),
+  accessTokenSecret: optionalEnv("X_ACCESS_TOKEN_SECRET"),
+  bearerToken: optionalEnv("X_BEARER_TOKEN"),
+  oauth2ClientId: optionalEnv("X_OAUTH2_CLIENT_ID"),
+  oauth2ClientSecret: optionalEnv("X_OAUTH2_CLIENT_SECRET"),
+  xquikApiKey: optionalEnv("XQUIK_API_KEY"),
+  xquikBaseUrl: optionalEnv("XQUIK_BASE_URL"),
 });
 
 const server = new McpServer({

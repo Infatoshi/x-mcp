@@ -23,36 +23,44 @@ interface XApiResponse<T = unknown> {
 }
 
 export interface XApiConfig {
-  apiKey: string;
-  apiSecret: string;
-  accessToken: string;
-  accessTokenSecret: string;
-  bearerToken: string;
+  apiKey?: string;
+  apiSecret?: string;
+  accessToken?: string;
+  accessTokenSecret?: string;
+  bearerToken?: string;
   oauth2ClientId?: string;
   oauth2ClientSecret?: string;
+  xquikApiKey?: string;
+  xquikBaseUrl?: string;
 }
 
 export class XApiClient {
-  private oauth: OAuth;
-  private token: OAuth.Token;
-  private bearerToken: string;
+  private oauth: OAuth | null = null;
+  private token: OAuth.Token | null = null;
+  private bearerToken?: string;
   private authenticatedUserId: string | null = null;
   private oauth2: OAuth2Manager;
+  private xquikApiKey?: string;
+  private xquikBaseUrl: string;
 
   constructor(private config: XApiConfig) {
-    this.oauth = new OAuth({
-      consumer: { key: config.apiKey, secret: config.apiSecret },
-      signature_method: "HMAC-SHA1",
-      hash_function(baseString, key) {
-        return crypto.createHmac("sha1", key).update(baseString).digest("base64");
-      },
-    });
-    this.token = { key: config.accessToken, secret: config.accessTokenSecret };
+    if (config.apiKey && config.apiSecret && config.accessToken && config.accessTokenSecret) {
+      this.oauth = new OAuth({
+        consumer: { key: config.apiKey, secret: config.apiSecret },
+        signature_method: "HMAC-SHA1",
+        hash_function(baseString, key) {
+          return crypto.createHmac("sha1", key).update(baseString).digest("base64");
+        },
+      });
+      this.token = { key: config.accessToken, secret: config.accessTokenSecret };
+    }
     this.bearerToken = config.bearerToken;
     this.oauth2 = new OAuth2Manager(
-      config.oauth2ClientId || config.apiKey,
-      config.oauth2ClientSecret || config.apiSecret,
+      config.oauth2ClientId || config.apiKey || "",
+      config.oauth2ClientSecret || config.apiSecret || "",
     );
+    this.xquikApiKey = config.xquikApiKey;
+    this.xquikBaseUrl = (config.xquikBaseUrl || "https://xquik.com").replace(/\/+$/, "");
   }
 
   getOAuth2Manager(): OAuth2Manager {
@@ -106,6 +114,7 @@ export class XApiClient {
     body?: unknown,
     contentType?: string,
   ): Promise<Response> {
+    const { oauth, token } = this.requireOAuthCredentials();
     // For form-urlencoded bodies, include params in OAuth signature per spec.
     // JSON and multipart (FormData) bodies are excluded from the signature.
     const isFormEncoded = contentType === "application/x-www-form-urlencoded";
@@ -114,7 +123,7 @@ export class XApiClient {
       : undefined;
 
     const headers: Record<string, string> = {
-      ...this.getOAuthHeaders(url, method, signatureData),
+      ...this.getOAuthHeaders(oauth, token, url, method, signatureData),
     };
     if (contentType) {
       headers["Content-Type"] = contentType;
@@ -137,12 +146,53 @@ export class XApiClient {
   }
 
   private async bearerFetch(url: string): Promise<Response> {
+    if (!this.bearerToken) {
+      throw new Error("Missing X_BEARER_TOKEN. Set X_BEARER_TOKEN or XQUIK_API_KEY for read tools.");
+    }
     return fetch(url, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${this.bearerToken}`,
       },
     });
+  }
+
+  private async xquikFetch<T>(
+    path: string,
+    params: Record<string, string | number | boolean | undefined>,
+    operation: string,
+  ): Promise<{ result: T; rateLimit: string }> {
+    if (!this.xquikApiKey) {
+      throw new Error("Missing XQUIK_API_KEY.");
+    }
+
+    const url = new URL(path, this.xquikBaseUrl);
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== "") {
+        url.searchParams.set(key, String(value));
+      }
+    }
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "x-api-key": this.xquikApiKey,
+      },
+    });
+    return this.handleResponse<T>(response, operation);
+  }
+
+  private hasXquikReadBackend(): boolean {
+    return Boolean(this.xquikApiKey);
+  }
+
+  private requireOAuthCredentials(): { oauth: OAuth; token: OAuth.Token } {
+    if (!this.oauth || !this.token) {
+      throw new Error(
+        "Missing X OAuth 1.0a credentials. Set X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, and X_ACCESS_TOKEN_SECRET for write tools.",
+      );
+    }
+    return { oauth: this.oauth, token: this.token };
   }
 
   private async handleResponse<T>(response: Response, operation: string): Promise<{ result: T; rateLimit: string }> {
@@ -237,6 +287,10 @@ export class XApiClient {
   }
 
   async getTweet(tweetId: string) {
+    if (this.hasXquikReadBackend()) {
+      return this.xquikFetch(`/x/tweets/${encodeURIComponent(tweetId)}`, {}, "getTweet");
+    }
+
     const params = new URLSearchParams({
       "tweet.fields": "created_at,public_metrics,author_id,conversation_id,in_reply_to_user_id,referenced_tweets,attachments,entities,lang,note_tweet",
       expansions: "author_id,referenced_tweets.id,attachments.media_keys",
@@ -249,6 +303,14 @@ export class XApiClient {
   }
 
   async searchTweets(query: string, maxResults: number = 10, nextToken?: string) {
+    if (this.hasXquikReadBackend()) {
+      return this.xquikFetch("/x/tweets/search", {
+        q: query,
+        limit: Math.min(Math.max(maxResults, 10), 100),
+        cursor: nextToken,
+      }, "searchTweets");
+    }
+
     const params = new URLSearchParams({
       query,
       max_results: Math.min(Math.max(maxResults, 10), 100).toString(),
@@ -267,6 +329,14 @@ export class XApiClient {
   // --- User operations ---
 
   async getUser(params: { username?: string; userId?: string }) {
+    if (this.hasXquikReadBackend()) {
+      const id = params.username || params.userId;
+      if (!id) {
+        throw new Error("Either username or userId must be provided");
+      }
+      return this.xquikFetch(`/x/users/${encodeURIComponent(id)}`, {}, "getUser");
+    }
+
     const fields = new URLSearchParams({
       "user.fields": "created_at,description,public_metrics,verified,profile_image_url,url,location,pinned_tweet_id",
     });
@@ -285,6 +355,12 @@ export class XApiClient {
   }
 
   async getTimeline(userId: string, maxResults: number = 10, nextToken?: string) {
+    if (this.hasXquikReadBackend()) {
+      return this.xquikFetch(`/x/users/${encodeURIComponent(userId)}/tweets`, {
+        cursor: nextToken,
+      }, "getTimeline");
+    }
+
     const params = new URLSearchParams({
       max_results: Math.min(Math.max(maxResults, 5), 100).toString(),
       "tweet.fields": "created_at,public_metrics,author_id,conversation_id,entities,lang,note_tweet",
@@ -315,6 +391,13 @@ export class XApiClient {
   }
 
   async getFollowers(userId: string, maxResults: number = 100, nextToken?: string) {
+    if (this.hasXquikReadBackend()) {
+      return this.xquikFetch(`/x/users/${encodeURIComponent(userId)}/followers`, {
+        pageSize: Math.min(Math.max(maxResults, 1), 1000),
+        cursor: nextToken,
+      }, "getFollowers");
+    }
+
     const params = new URLSearchParams({
       max_results: Math.min(Math.max(maxResults, 1), 1000).toString(),
       "user.fields": "created_at,description,public_metrics,verified,profile_image_url",
@@ -327,6 +410,13 @@ export class XApiClient {
   }
 
   async getFollowing(userId: string, maxResults: number = 100, nextToken?: string) {
+    if (this.hasXquikReadBackend()) {
+      return this.xquikFetch(`/x/users/${encodeURIComponent(userId)}/following`, {
+        pageSize: Math.min(Math.max(maxResults, 1), 1000),
+        cursor: nextToken,
+      }, "getFollowing");
+    }
+
     const params = new URLSearchParams({
       max_results: Math.min(Math.max(maxResults, 1), 1000).toString(),
       "user.fields": "created_at,description,public_metrics,verified,profile_image_url",
@@ -418,12 +508,18 @@ export class XApiClient {
     return { mediaId, ...finalizeResult };
   }
 
-  private getOAuthHeaders(url: string, method: string, data?: Record<string, string>): Record<string, string> {
+  private getOAuthHeaders(
+    oauth: OAuth,
+    token: OAuth.Token,
+    url: string,
+    method: string,
+    data?: Record<string, string>,
+  ): Record<string, string> {
     const requestData: { url: string; method: string; data?: Record<string, string> } = { url, method };
     if (data) {
       requestData.data = data;
     }
-    const authHeader = this.oauth.toHeader(this.oauth.authorize(requestData, this.token));
+    const authHeader = oauth.toHeader(oauth.authorize(requestData, token));
     return { Authorization: authHeader.Authorization };
   }
 

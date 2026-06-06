@@ -112,6 +112,12 @@ export class OAuth2Manager {
    * Resolves when the callback is received and tokens are stored.
    */
   async authorize(): Promise<string> {
+    if (!this.clientId || !this.clientSecret) {
+      throw new Error(
+        "Missing X OAuth 2.0 credentials. Set X_OAUTH2_CLIENT_ID and X_OAUTH2_CLIENT_SECRET, or X_API_KEY and X_API_SECRET.",
+      );
+    }
+
     const codeVerifier = crypto.randomBytes(32).toString("base64url");
     const codeChallenge = crypto
       .createHash("sha256")

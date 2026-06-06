@@ -91,6 +91,21 @@ X_ACCESS_TOKEN=your_access_token
 X_ACCESS_TOKEN_SECRET=your_access_token_secret
 ```
 
+### Optional: Use Xquik for read tools
+
+Read tools can use [Xquik](https://xquik.com) instead of `X_BEARER_TOKEN`.
+Set `XQUIK_API_KEY` in `.env` or in your MCP client config:
+
+```
+XQUIK_API_KEY=your_xquik_api_key
+XQUIK_BASE_URL=https://xquik.com
+```
+
+When `XQUIK_API_KEY` is set, these tools read through Xquik:
+`get_tweet`, `search_tweets`, `get_user`, `get_timeline`, `get_followers`, and
+`get_following`. Posting, media upload, bookmarks, likes, retweets, and metrics
+still require the X API credentials above.
+
 ---
 
 ## Connect to Your Client
