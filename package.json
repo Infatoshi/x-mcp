@@ -24,10 +24,12 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
     "dotenv": "^16.4.7",
+    "express": "^5.2.1",
     "oauth-1.0a": "^2.2.6",
     "zod": "^3.25.0"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^22.0.0",
     "@types/oauth": "^0.9.6",
     "typescript": "^5.7.0"

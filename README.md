@@ -26,6 +26,24 @@ Accepts tweet URLs or IDs interchangeably -- paste `https://x.com/user/status/12
 
 ---
 
+## Transport
+
+x-mcp runs as an **HTTP server using the MCP Streamable HTTP transport** (stateful, session-based). This lets you run it:
+
+- **Locally** as a background process your MCP client connects to over HTTP
+- **Remotely** on platforms like Render, Fly.io, Railway, etc. and connect from any device
+
+**Default endpoint**: `http://localhost:3000/mcp` (set via `PORT` env var)
+
+| Path | Methods | Purpose |
+|------|---------|---------|
+| `/mcp` | `POST`, `GET`, `DELETE` | MCP protocol endpoint (initialize, stream, terminate sessions) |
+| `/health` | `GET` | Health check (returns `{"status":"ok"}`) |
+
+The Streamable HTTP transport supersedes the older HTTP+SSE transport and is the current MCP specification.
+
+---
+
 ## Setup
 
 ### 1. Clone and build
@@ -91,48 +109,70 @@ X_ACCESS_TOKEN=your_access_token
 X_ACCESS_TOKEN_SECRET=your_access_token_secret
 ```
 
+For **local** runs the server reads `.env` automatically. For **remote** deployments (Render, etc.) set these as environment variables in your platform's dashboard.
+
+### 4. Run the server
+
+**Local:**
+```bash
+npm start
+```
+You should see: `x-mcp Streamable HTTP server listening on http://0.0.0.0:3000`
+
+**Remote (Render example):**
+
+| Field | Value |
+|-------|-------|
+| **Build Command** | `npm install && npm run build` |
+| **Start Command** | `npm start` |
+| **Environment** | All 5 `X_API_*` vars (Render auto-sets `PORT`) |
+
+Health check URL: `https://<your-app>.onrender.com/health`
+
 ---
 
 ## Connect to Your Client
 
-Pick your client below. You only need to follow one section.
+Pick your client below. Replace `http://localhost:3000` with your remote URL (e.g. `https://x-mcp.onrender.com`) if running remotely.
 
 ### Claude Code
 
+**Remote (HTTP):**
 ```bash
-claude mcp add --scope user x-twitter -- node /ABSOLUTE/PATH/TO/x-mcp/dist/index.js
+claude mcp add --scope user --transport http x-twitter http://localhost:3000/mcp
 ```
 
-Replace `/ABSOLUTE/PATH/TO/x-mcp` with the actual path where you cloned the repo. Then restart Claude Code.
+**Local (HTTP, in background):**
+```bash
+# In one terminal:
+npm start
+# In another:
+claude mcp add --scope user --transport http x-twitter http://localhost:3000/mcp
+```
 
 ### Claude Desktop
 
-Add to your `claude_desktop_config.json`:
+Edit `claude_desktop_config.json`:
 
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude%\claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "x-twitter": {
-      "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/x-mcp/dist/index.js"],
-      "env": {
-        "X_API_KEY": "your_consumer_key",
-        "X_API_SECRET": "your_secret_key",
-        "X_ACCESS_TOKEN": "your_access_token",
-        "X_ACCESS_TOKEN_SECRET": "your_access_token_secret",
-        "X_BEARER_TOKEN": "your_bearer_token"
-      }
+      "type": "http",
+      "url": "http://localhost:3000/mcp"
     }
   }
 }
 ```
 
+For remote: replace `http://localhost:3000/mcp` with your deployed URL.
+
 ### Cursor
 
-Add to your Cursor MCP config:
+Edit your Cursor MCP config:
 
 - **Global** (all projects): `~/.cursor/mcp.json`
 - **Project-scoped**: `.cursor/mcp.json` in your project root
@@ -141,28 +181,20 @@ Add to your Cursor MCP config:
 {
   "mcpServers": {
     "x-twitter": {
-      "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/x-mcp/dist/index.js"],
-      "env": {
-        "X_API_KEY": "your_consumer_key",
-        "X_API_SECRET": "your_secret_key",
-        "X_ACCESS_TOKEN": "your_access_token",
-        "X_ACCESS_TOKEN_SECRET": "your_access_token_secret",
-        "X_BEARER_TOKEN": "your_bearer_token"
-      }
+      "type": "http",
+      "url": "http://localhost:3000/mcp"
     }
   }
 }
 ```
 
-You can also verify the connection in Cursor Settings > MCP Servers.
+Verify in Cursor: Settings > MCP Servers.
 
 ### OpenAI Codex
 
 **Option A: CLI**
-
 ```bash
-codex mcp add x-twitter --env X_API_KEY=your_consumer_key --env X_API_SECRET=your_secret_key --env X_ACCESS_TOKEN=your_access_token --env X_ACCESS_TOKEN_SECRET=your_access_token_secret --env X_BEARER_TOKEN=your_bearer_token -- node /ABSOLUTE/PATH/TO/x-mcp/dist/index.js
+codex mcp add x-twitter --url http://localhost:3000/mcp
 ```
 
 **Option B: config.toml**
@@ -171,40 +203,28 @@ Add to `~/.codex/config.toml` (global) or `.codex/config.toml` (project-scoped):
 
 ```toml
 [mcp_servers.x-twitter]
-command = "node"
-args = ["/ABSOLUTE/PATH/TO/x-mcp/dist/index.js"]
-
-[mcp_servers.x-twitter.env]
-X_API_KEY = "your_consumer_key"
-X_API_SECRET = "your_secret_key"
-X_ACCESS_TOKEN = "your_access_token"
-X_ACCESS_TOKEN_SECRET = "your_access_token_secret"
-X_BEARER_TOKEN = "your_bearer_token"
+type = "http"
+url = "http://localhost:3000/mcp"
 ```
+
+The CLI and the Codex VS Code extension share this config -- set it up once and both work.
 
 ### Windsurf
 
-Add to `~/.codeium/windsurf/mcp_config.json`:
+Edit `~/.codeium/windsurf/mcp_config.json`:
 
 ```json
 {
   "mcpServers": {
     "x-twitter": {
-      "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/x-mcp/dist/index.js"],
-      "env": {
-        "X_API_KEY": "your_consumer_key",
-        "X_API_SECRET": "your_secret_key",
-        "X_ACCESS_TOKEN": "your_access_token",
-        "X_ACCESS_TOKEN_SECRET": "your_access_token_secret",
-        "X_BEARER_TOKEN": "your_bearer_token"
-      }
+      "type": "http",
+      "url": "http://localhost:3000/mcp"
     }
   }
 }
 ```
 
-You can also add it from Windsurf Settings > Cascade > MCP Servers.
+Can also be added from Windsurf Settings > Cascade > MCP Servers.
 
 ### Cline (VS Code)
 
@@ -214,15 +234,8 @@ Open Cline's MCP settings (click the MCP Servers icon in Cline's top nav > Confi
 {
   "mcpServers": {
     "x-twitter": {
-      "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/x-mcp/dist/index.js"],
-      "env": {
-        "X_API_KEY": "your_consumer_key",
-        "X_API_SECRET": "your_secret_key",
-        "X_ACCESS_TOKEN": "your_access_token",
-        "X_ACCESS_TOKEN_SECRET": "your_access_token_secret",
-        "X_BEARER_TOKEN": "your_bearer_token"
-      },
+      "type": "http",
+      "url": "http://localhost:3000/mcp",
       "alwaysAllow": [],
       "disabled": false
     }
@@ -232,13 +245,13 @@ Open Cline's MCP settings (click the MCP Servers icon in Cline's top nav > Confi
 
 ### Other MCP Clients
 
-This is a standard stdio MCP server. For any MCP-compatible client, point it at:
+This is a standard Streamable HTTP MCP server. Point your client at:
 
 ```
-node /ABSOLUTE/PATH/TO/x-mcp/dist/index.js
+http://localhost:3000/mcp
 ```
 
-With these environment variables: `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`, `X_BEARER_TOKEN`.
+(or your remote URL) using the HTTP transport type. Required environment variables on the server: `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`, `X_BEARER_TOKEN`.
 
 ---
 
@@ -266,7 +279,7 @@ Free tier: 500 posts/month. Basic: 10,000/month. Pro: 1,000,000/month.
 Your Access Token was generated before you enabled write permissions. Go to the X Developer Portal, ensure App permissions are set to "Read and write", then **Regenerate** your Access Token and Secret.
 
 ### 401 Unauthorized
-Double-check that all 5 credentials in your `.env` are correct and that there are no extra spaces or line breaks.
+Double-check that all 5 credentials in your `.env` (or platform env vars) are correct and that there are no extra spaces or line breaks.
 
 ### 429 Rate Limited
 The error message includes exactly when the rate limit resets. Wait until then, or reduce request frequency.
@@ -274,8 +287,13 @@ The error message includes exactly when the rate limit resets. Wait until then, 
 ### Reply fails with a permissions/restriction error
 As of Feb 2026, X restricts programmatic replies via the API on all self-serve tiers. You can only reply if the original author @mentions you or quotes your post. This applies to Free, Basic, Pro, and Pay-Per-Use tiers (Enterprise is exempt). Use `quote_tweet` as a workaround.
 
+### Server unreachable / connection refused
+- Verify the server is running: `curl http://localhost:3000/health` (or your remote URL) should return `{"status":"ok"}`
+- For remote deployments, confirm the platform is listening on the correct port (Render auto-sets `PORT`)
+- Free-tier Render instances spin down after 15 min of inactivity -- the first request after idle takes ~30-60s
+
 ### Server shows "Connected" but tools aren't used
-Make sure you added the server with the correct scope (user/global, not project-scoped if you want it everywhere), then restart your client.
+Make sure you registered the server with the correct scope and HTTP transport type, then restart your client.
 
 ---
 

@@ -8,6 +8,12 @@ You are an AI agent helping a user set up the x-mcp server. This file contains e
 
 x-mcp is an MCP (Model Context Protocol) server that connects AI agents to the X (Twitter) API. Once set up, you (the AI) will have access to 16 tools for posting tweets, reading timelines, searching, liking, retweeting, uploading media, and more.
 
+## Transport
+
+x-mcp uses the **MCP Streamable HTTP transport** (stateful, session-based). The server exposes a single endpoint at `/mcp` and a health check at `/health`. This works for both local and remote (Render/Fly/Railway) deployments.
+
+Default URL: `http://localhost:3000/mcp` (override with `PORT` env var).
+
 ## Prerequisites
 
 - Node.js 18+ installed
@@ -101,18 +107,39 @@ X_ACCESS_TOKEN=<Access Token from step 2c>
 X_ACCESS_TOKEN_SECRET=<Access Token Secret from step 2c>
 ```
 
+For remote deployments (Render, etc.), set these as environment variables in the platform's dashboard instead of using a `.env` file.
+
 ---
 
-## Step 4: Register with Your Client
+## Step 4: Start the Server
 
-Determine which client the user is using and follow the corresponding instructions. Only one of these is needed.
+**Local:**
+```bash
+npm start
+```
+You should see: `x-mcp Streamable HTTP server listening on http://0.0.0.0:3000`
+
+Verify with: `curl http://localhost:3000/health` (returns `{"status":"ok"}`)
+
+**Remote (Render example):**
+
+| Field | Value |
+|-------|-------|
+| **Build Command** | `npm install && npm run build` |
+| **Start Command** | `npm start` |
+| **Health Check Path** | `/health` |
+| **Environment** | All 5 `X_API_*` vars (Render auto-sets `PORT`) |
+
+---
+
+## Step 5: Register with Your Client
+
+Determine which client the user is using and follow the corresponding instructions. Only one of these is needed. Replace `http://localhost:3000` with the remote URL (e.g. `https://x-mcp.onrender.com`) if running remotely.
 
 ### Claude Code
 
-Run this command (replace the path with the actual absolute path to the cloned repo):
-
 ```bash
-claude mcp add --scope user x-twitter -- node /absolute/path/to/x-mcp/dist/index.js
+claude mcp add --scope user --transport http x-twitter http://localhost:3000/mcp
 ```
 
 Then restart Claude Code. To verify:
@@ -134,15 +161,8 @@ Add to `claude_desktop_config.json`:
 {
   "mcpServers": {
     "x-twitter": {
-      "command": "node",
-      "args": ["/absolute/path/to/x-mcp/dist/index.js"],
-      "env": {
-        "X_API_KEY": "value",
-        "X_API_SECRET": "value",
-        "X_ACCESS_TOKEN": "value",
-        "X_ACCESS_TOKEN_SECRET": "value",
-        "X_BEARER_TOKEN": "value"
-      }
+      "type": "http",
+      "url": "http://localhost:3000/mcp"
     }
   }
 }
@@ -155,21 +175,14 @@ Restart Claude Desktop after saving.
 Add to the Cursor MCP config file:
 
 - **Global** (all projects): `~/.cursor/mcp.json`
-- **Project-scoped**: `.cursor/mcp.json` in the project root
+- **Project-scoped**: `.cursor/mcp.json` in your project root
 
 ```json
 {
   "mcpServers": {
     "x-twitter": {
-      "command": "node",
-      "args": ["/absolute/path/to/x-mcp/dist/index.js"],
-      "env": {
-        "X_API_KEY": "value",
-        "X_API_SECRET": "value",
-        "X_ACCESS_TOKEN": "value",
-        "X_ACCESS_TOKEN_SECRET": "value",
-        "X_BEARER_TOKEN": "value"
-      }
+      "type": "http",
+      "url": "http://localhost:3000/mcp"
     }
   }
 }
@@ -182,7 +195,7 @@ Verify in Cursor: Settings > MCP Servers -- the server should appear as connecte
 **Option A -- CLI:**
 
 ```bash
-codex mcp add x-twitter --env X_API_KEY=value --env X_API_SECRET=value --env X_ACCESS_TOKEN=value --env X_ACCESS_TOKEN_SECRET=value --env X_BEARER_TOKEN=value -- node /absolute/path/to/x-mcp/dist/index.js
+codex mcp add x-twitter --url http://localhost:3000/mcp
 ```
 
 **Option B -- config.toml:**
@@ -191,15 +204,8 @@ Add to `~/.codex/config.toml` (global) or `.codex/config.toml` (project-scoped):
 
 ```toml
 [mcp_servers.x-twitter]
-command = "node"
-args = ["/absolute/path/to/x-mcp/dist/index.js"]
-
-[mcp_servers.x-twitter.env]
-X_API_KEY = "value"
-X_API_SECRET = "value"
-X_ACCESS_TOKEN = "value"
-X_ACCESS_TOKEN_SECRET = "value"
-X_BEARER_TOKEN = "value"
+type = "http"
+url = "http://localhost:3000/mcp"
 ```
 
 The CLI and the Codex VS Code extension share this config -- set it up once and both work.
@@ -215,15 +221,8 @@ Add to the Windsurf MCP config:
 {
   "mcpServers": {
     "x-twitter": {
-      "command": "node",
-      "args": ["/absolute/path/to/x-mcp/dist/index.js"],
-      "env": {
-        "X_API_KEY": "value",
-        "X_API_SECRET": "value",
-        "X_ACCESS_TOKEN": "value",
-        "X_ACCESS_TOKEN_SECRET": "value",
-        "X_BEARER_TOKEN": "value"
-      }
+      "type": "http",
+      "url": "http://localhost:3000/mcp"
     }
   }
 }
@@ -239,15 +238,8 @@ Open Cline's MCP settings: click the MCP Servers icon in Cline's top navigation 
 {
   "mcpServers": {
     "x-twitter": {
-      "command": "node",
-      "args": ["/absolute/path/to/x-mcp/dist/index.js"],
-      "env": {
-        "X_API_KEY": "value",
-        "X_API_SECRET": "value",
-        "X_ACCESS_TOKEN": "value",
-        "X_ACCESS_TOKEN_SECRET": "value",
-        "X_BEARER_TOKEN": "value"
-      },
+      "type": "http",
+      "url": "http://localhost:3000/mcp",
       "alwaysAllow": [],
       "disabled": false
     }
@@ -257,15 +249,13 @@ Open Cline's MCP settings: click the MCP Servers icon in Cline's top navigation 
 
 ### Any Other MCP Client
 
-This is a standard stdio MCP server. Point your client at:
+This is a standard Streamable HTTP MCP server. Point your client at:
 
 ```
-node /absolute/path/to/x-mcp/dist/index.js
+http://localhost:3000/mcp
 ```
 
-With environment variables: `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`, `X_BEARER_TOKEN`.
-
-In all cases, replace `/absolute/path/to/x-mcp` with the actual path where the repo was cloned, and replace `value` with the actual credentials from Step 2.
+(or your remote URL) using the HTTP transport type. On the server, the required environment variables are: `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`, `X_BEARER_TOKEN`.
 
 ---
 
@@ -329,8 +319,9 @@ To post with an image:
 | Error | Cause | Fix |
 |-------|-------|-----|
 | 403 "oauth1-permissions" | Access Token has Read-only permissions | Enable "Read and write" in app settings, then **regenerate** Access Token and Secret |
-| 401 Unauthorized | Bad credentials | Verify all 5 values in `.env` are correct, no extra whitespace |
+| 401 Unauthorized | Bad credentials | Verify all 5 values in `.env` (or platform env vars) are correct, no extra whitespace |
 | Reply fails / restriction error | X restricts programmatic replies (Feb 2024) | Can only reply if original author @mentioned you or quoted your post. Use `quote_tweet` instead |
 | 429 Rate Limited | Too many requests | Error includes reset time -- wait until then |
-| "Missing required environment variable" | `.env` file not found or incomplete | Ensure `.env` exists in project root with all 5 variables |
-| Server connected but tools not visible | MCP server scope issue | Re-add with `claude mcp add --scope user`, restart Claude Code |
+| "Missing required environment variable" | `.env` file not found or incomplete | Ensure `.env` exists in project root with all 5 variables, or platform env vars are set for remote deploys |
+| Server unreachable / connection refused | Server not running or wrong URL | Verify `curl http://localhost:3000/health` (or remote URL) returns `{"status":"ok"}` |
+| Server connected but tools not visible | MCP transport type mismatch | Re-add with `--transport http` for Claude Code, or `type: "http"` in config; restart client |
