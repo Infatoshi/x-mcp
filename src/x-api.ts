@@ -200,12 +200,10 @@ export class XApiClient {
     poll_duration_minutes?: number;
     media_ids?: string[];
   }) {
-    // Auto-append agent disclosure to all outgoing tweets
-    const model = process.env.CLAUDE_MODEL || "Claude Opus 4.6";
-    const disclosure = `\n\n[${model} on behalf of @elliotarledge]`;
-    const text = params.text.includes("on behalf of @elliotarledge")
-      ? params.text  // avoid double-appending
-      : params.text + disclosure;
+    const disclosure = process.env.X_AGENT_DISCLOSURE?.trim();
+    const text = disclosure && !params.text.includes(disclosure)
+      ? `${params.text}\n\n${disclosure}`
+      : params.text;
     const body: Record<string, unknown> = { text };
 
     if (params.reply_to) {

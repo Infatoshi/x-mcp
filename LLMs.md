@@ -10,7 +10,7 @@ x-mcp is an MCP (Model Context Protocol) server that connects AI agents to the X
 
 ## Transport
 
-x-mcp uses the **MCP Streamable HTTP transport** (stateful, session-based). The server exposes a single endpoint at `/mcp` and a health check at `/health`. This works for both local and remote (Render/Fly/Railway) deployments.
+x-mcp uses the **MCP Streamable HTTP transport** (stateful, session-based) at `/mcp` and the legacy HTTP+SSE MCP transport at `/sse` for integration clients like Poke. It also exposes a health check at `/health`. This works for both local and remote (Railway/Render/Fly) deployments.
 
 Default URL: `http://localhost:3000/mcp` (override with `PORT` env var).
 
@@ -107,7 +107,15 @@ X_ACCESS_TOKEN=<Access Token from step 2c>
 X_ACCESS_TOKEN_SECRET=<Access Token Secret from step 2c>
 ```
 
-For remote deployments (Render, etc.), set these as environment variables in the platform's dashboard instead of using a `.env` file.
+Optional:
+
+```
+X_AGENT_DISCLOSURE=[AI-assisted post]
+```
+
+If set, this text is appended to outgoing posts. Leave it unset to post exactly the provided text.
+
+For remote deployments (Railway, Render, etc.), set these as environment variables in the platform's dashboard instead of using a `.env` file.
 
 ---
 
@@ -121,14 +129,14 @@ You should see: `x-mcp Streamable HTTP server listening on http://0.0.0.0:3000`
 
 Verify with: `curl http://localhost:3000/health` (returns `{"status":"ok"}`)
 
-**Remote (Render example):**
+**Remote (Railway/Render example):**
 
 | Field | Value |
 |-------|-------|
 | **Build Command** | `npm install && npm run build` |
 | **Start Command** | `npm start` |
 | **Health Check Path** | `/health` |
-| **Environment** | All 5 `X_API_*` vars (Render auto-sets `PORT`) |
+| **Environment** | All 5 `X_API_*` vars (Railway/Render auto-set `PORT`) |
 
 ---
 
@@ -256,6 +264,16 @@ http://localhost:3000/mcp
 ```
 
 (or your remote URL) using the HTTP transport type. On the server, the required environment variables are: `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`, `X_BEARER_TOKEN`.
+
+### Poke
+
+Use the deployed SSE MCP endpoint:
+
+```
+https://<your-app>.up.railway.app/sse
+```
+
+Poke will receive `/messages?sessionId=...` from the SSE handshake and use that for client messages. This is not a live X/Twitter push stream; X read tools still call the X API when Poke invokes them.
 
 ---
 

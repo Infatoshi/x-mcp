@@ -38,9 +38,11 @@ x-mcp runs as an **HTTP server using the MCP Streamable HTTP transport** (statef
 | Path | Methods | Purpose |
 |------|---------|---------|
 | `/mcp` | `POST`, `GET`, `DELETE` | MCP protocol endpoint (initialize, stream, terminate sessions) |
+| `/sse` | `GET` | Legacy HTTP+SSE MCP endpoint for integration clients like Poke |
+| `/messages` | `POST` | Legacy HTTP+SSE client message endpoint, advertised automatically by `/sse` |
 | `/health` | `GET` | Health check (returns `{"status":"ok"}`) |
 
-The Streamable HTTP transport supersedes the older HTTP+SSE transport and is the current MCP specification.
+The Streamable HTTP transport supersedes the older HTTP+SSE transport and is the current MCP specification. This server keeps both: `/mcp` for modern clients, and `/sse` for integration clients that still expect an SSE MCP URL. This does not create a live X/Twitter firehose; X read tools still call the X API when the MCP client invokes them.
 
 ---
 
@@ -109,7 +111,15 @@ X_ACCESS_TOKEN=your_access_token
 X_ACCESS_TOKEN_SECRET=your_access_token_secret
 ```
 
-For **local** runs the server reads `.env` automatically. For **remote** deployments (Render, etc.) set these as environment variables in your platform's dashboard.
+Optional:
+
+```
+X_AGENT_DISCLOSURE=[AI-assisted post]
+```
+
+If set, this text is appended to outgoing posts. Leave it unset to post exactly the provided text.
+
+For **local** runs the server reads `.env` automatically. For **remote** deployments (Render, Railway, etc.) set these as environment variables in your platform's dashboard.
 
 ### 4. Run the server
 
@@ -119,15 +129,15 @@ npm start
 ```
 You should see: `x-mcp Streamable HTTP server listening on http://0.0.0.0:3000`
 
-**Remote (Render example):**
+**Remote (Railway/Render example):**
 
 | Field | Value |
 |-------|-------|
 | **Build Command** | `npm install && npm run build` |
 | **Start Command** | `npm start` |
-| **Environment** | All 5 `X_API_*` vars (Render auto-sets `PORT`) |
+| **Environment** | All 5 `X_API_*` vars (Railway/Render auto-set `PORT`) |
 
-Health check URL: `https://<your-app>.onrender.com/health`
+Health check URL: `https://<your-app>.up.railway.app/health` or `https://<your-app>.onrender.com/health`
 
 ---
 
@@ -252,6 +262,16 @@ http://localhost:3000/mcp
 ```
 
 (or your remote URL) using the HTTP transport type. Required environment variables on the server: `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`, `X_BEARER_TOKEN`.
+
+### Poke
+
+Use the deployed SSE MCP endpoint:
+
+```
+https://<your-app>.up.railway.app/sse
+```
+
+Poke will receive `/messages?sessionId=...` from the SSE handshake and use that for client messages.
 
 ---
 
