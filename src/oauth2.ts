@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import http from "http";
 import fs from "fs";
 import path from "path";
@@ -10,7 +10,8 @@ const TOKEN_FILE = path.resolve(__dirname, "..", ".oauth2-tokens.json");
 const AUTH_URL = "https://twitter.com/i/oauth2/authorize";
 const TOKEN_URL = "https://api.twitter.com/2/oauth2/token";
 const REDIRECT_URI = "http://127.0.0.1:3219/callback";
-const SCOPES = "bookmark.read bookmark.write tweet.read users.read offline.access";
+const SCOPES =
+  "bookmark.read bookmark.write tweet.read users.read offline.access";
 
 interface OAuth2Tokens {
   access_token: string;
@@ -42,7 +43,10 @@ export class OAuth2Manager {
 
   private saveTokens(tokens: OAuth2Tokens) {
     this.tokens = tokens;
-    fs.writeFileSync(TOKEN_FILE, JSON.stringify(tokens, null, 2));
+    fs.writeFileSync(TOKEN_FILE, JSON.stringify(tokens, null, 2), {
+      mode: 0o600,
+    });
+    fs.chmodSync(TOKEN_FILE, 0o600);
   }
 
   get isAuthorized(): boolean {
@@ -87,13 +91,15 @@ export class OAuth2Manager {
     if (!response.ok) {
       const text = await response.text();
       this.tokens = null;
-      try { fs.unlinkSync(TOKEN_FILE); } catch {}
+      try {
+        fs.unlinkSync(TOKEN_FILE);
+      } catch {}
       throw new Error(
         `OAuth 2.0 token refresh failed (HTTP ${response.status}): ${text}. Re-run 'setup_oauth2'.`,
       );
     }
 
-    const data = await response.json() as {
+    const data = (await response.json()) as {
       access_token: string;
       refresh_token: string;
       expires_in: number;
@@ -148,7 +154,11 @@ export class OAuth2Manager {
             res.writeHead(400);
             res.end("Invalid callback: missing code or state mismatch");
             server.close();
-            reject(new Error("OAuth callback failed: state mismatch or missing code"));
+            reject(
+              new Error(
+                "OAuth callback failed: state mismatch or missing code",
+              ),
+            );
             return;
           }
 
@@ -175,11 +185,15 @@ export class OAuth2Manager {
             res.writeHead(500);
             res.end(`Token exchange failed: ${text}`);
             server.close();
-            reject(new Error(`Token exchange failed (HTTP ${tokenRes.status}): ${text}`));
+            reject(
+              new Error(
+                `Token exchange failed (HTTP ${tokenRes.status}): ${text}`,
+              ),
+            );
             return;
           }
 
-          const data = await tokenRes.json() as {
+          const data = (await tokenRes.json()) as {
             access_token: string;
             refresh_token: string;
             expires_in: number;
@@ -192,9 +206,13 @@ export class OAuth2Manager {
           });
 
           res.writeHead(200, { "Content-Type": "text/html" });
-          res.end("<h1>Authorization successful!</h1><p>You can close this tab and return to your MCP client.</p>");
+          res.end(
+            "<h1>Authorization successful!</h1><p>You can close this tab and return to your MCP client.</p>",
+          );
           server.close();
-          resolve("OAuth 2.0 authorization complete. Bookmark access is now enabled.");
+          resolve(
+            "OAuth 2.0 authorization complete. Bookmark access is now enabled.",
+          );
         } catch (err) {
           server.close();
           reject(err);
@@ -202,12 +220,20 @@ export class OAuth2Manager {
       });
 
       server.listen(3219, "127.0.0.1", () => {
-        const cmd = process.platform === "darwin"
-          ? `open "${authUrl}"`
-          : process.platform === "win32"
-            ? `start "${authUrl}"`
-            : `xdg-open "${authUrl}"`;
-        exec(cmd);
+        const opener =
+          process.platform === "darwin"
+            ? { command: "open", args: [authUrl] }
+            : process.platform === "win32"
+              ? { command: "cmd", args: ["/c", "start", "", authUrl] }
+              : { command: "xdg-open", args: [authUrl] };
+
+        execFile(opener.command, opener.args, (error) => {
+          if (error) {
+            console.error(
+              `Failed to open OAuth URL automatically. Visit manually: ${authUrl}`,
+            );
+          }
+        });
       });
 
       // Timeout after 2 minutes

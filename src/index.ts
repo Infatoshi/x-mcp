@@ -4,9 +4,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import dotenv from "dotenv";
-import express, { Request, Response } from "express";
+import express, { NextFunction, Request, Response } from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import { z } from "zod";
@@ -18,7 +18,17 @@ dotenv.config({ path: path.resolve(__dirname, "..", ".env") });
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
-    throw new Error(`Missing required environment variable: ${name}. See .env.example for required variables.`);
+    throw new Error(
+      `Missing required environment variable: ${name}. See .env.example for required variables.`,
+    );
+  }
+  return value;
+}
+
+function requireSecretEnv(name: string): string {
+  const value = requireEnv(name);
+  if (value.length < 32) {
+    throw new Error(`${name} must be at least 32 characters long.`);
   }
   return value;
 }
@@ -32,6 +42,7 @@ const client = new XApiClient({
   oauth2ClientId: process.env.X_OAUTH2_CLIENT_ID,
   oauth2ClientSecret: process.env.X_OAUTH2_CLIENT_SECRET,
 });
+const mcpAuthToken = requireSecretEnv("MCP_AUTH_TOKEN");
 
 // --- Helper to extract tweet ID from URL or raw ID ---
 function parseTweetId(input: string): string {
@@ -64,10 +75,21 @@ function createServer(): McpServer {
     "post_tweet",
     "Create a new post on X (Twitter). Supports text, polls, and media attachments.",
     {
-      text: z.string().describe("The text content of the tweet (max 280 characters)"),
-      poll_options: z.array(z.string()).optional().describe("Poll options (2-4 choices)"),
-      poll_duration_minutes: z.number().optional().describe("Poll duration in minutes (default 1440 = 24h)"),
-      media_ids: z.array(z.string()).optional().describe("Media IDs to attach (from upload_media)"),
+      text: z
+        .string()
+        .describe("The text content of the tweet (max 280 characters)"),
+      poll_options: z
+        .array(z.string())
+        .optional()
+        .describe("Poll options (2-4 choices)"),
+      poll_duration_minutes: z
+        .number()
+        .optional()
+        .describe("Poll duration in minutes (default 1440 = 24h)"),
+      media_ids: z
+        .array(z.string())
+        .optional()
+        .describe("Media IDs to attach (from upload_media)"),
     },
     async ({ text, poll_options, poll_duration_minutes, media_ids }) => {
       try {
@@ -77,9 +99,14 @@ function createServer(): McpServer {
           poll_duration_minutes,
           media_ids,
         });
-        return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+        return {
+          content: [{ type: "text", text: formatResult(result, rateLimit) }],
+        };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );
@@ -100,9 +127,14 @@ function createServer(): McpServer {
           reply_to: id,
           media_ids,
         });
-        return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+        return {
+          content: [{ type: "text", text: formatResult(result, rateLimit) }],
+        };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );
@@ -123,9 +155,14 @@ function createServer(): McpServer {
           quote_tweet_id: id,
           media_ids,
         });
-        return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+        return {
+          content: [{ type: "text", text: formatResult(result, rateLimit) }],
+        };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );
@@ -140,9 +177,14 @@ function createServer(): McpServer {
       try {
         const id = parseTweetId(tweet_id);
         const { result, rateLimit } = await client.deleteTweet(id);
-        return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+        return {
+          content: [{ type: "text", text: formatResult(result, rateLimit) }],
+        };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );
@@ -157,9 +199,14 @@ function createServer(): McpServer {
       try {
         const id = parseTweetId(tweet_id);
         const { result, rateLimit } = await client.getTweet(id);
-        return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+        return {
+          content: [{ type: "text", text: formatResult(result, rateLimit) }],
+        };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );
@@ -172,16 +219,35 @@ function createServer(): McpServer {
     "search_tweets",
     "Search recent tweets by query. Supports keywords, hashtags, from:user, to:user, is:reply, has:media, etc. Uses the recent search endpoint (last 7 days).",
     {
-      query: z.string().describe("Search query (e.g. 'from:elonmusk', '#ai', 'machine learning')"),
-      max_results: z.number().optional().describe("Number of results (10-100, default 10)"),
-      next_token: z.string().optional().describe("Pagination token from previous response"),
+      query: z
+        .string()
+        .describe(
+          "Search query (e.g. 'from:elonmusk', '#ai', 'machine learning')",
+        ),
+      max_results: z
+        .number()
+        .optional()
+        .describe("Number of results (10-100, default 10)"),
+      next_token: z
+        .string()
+        .optional()
+        .describe("Pagination token from previous response"),
     },
     async ({ query, max_results, next_token }) => {
       try {
-        const { result, rateLimit } = await client.searchTweets(query, max_results, next_token);
-        return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+        const { result, rateLimit } = await client.searchTweets(
+          query,
+          max_results,
+          next_token,
+        );
+        return {
+          content: [{ type: "text", text: formatResult(result, rateLimit) }],
+        };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );
@@ -200,12 +266,28 @@ function createServer(): McpServer {
     async ({ username, user_id }) => {
       try {
         if (!username && !user_id) {
-          return { content: [{ type: "text", text: "Error: Provide either username or user_id" }], isError: true };
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: Provide either username or user_id",
+              },
+            ],
+            isError: true,
+          };
         }
-        const { result, rateLimit } = await client.getUser({ username, userId: user_id });
-        return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+        const { result, rateLimit } = await client.getUser({
+          username,
+          userId: user_id,
+        });
+        return {
+          content: [{ type: "text", text: formatResult(result, rateLimit) }],
+        };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );
@@ -215,15 +297,30 @@ function createServer(): McpServer {
     "Fetch a user's recent posts. Requires the user's numeric ID (use get_user first to resolve username to ID).",
     {
       user_id: z.string().describe("The numeric user ID"),
-      max_results: z.number().optional().describe("Number of results (5-100, default 10)"),
-      next_token: z.string().optional().describe("Pagination token from previous response"),
+      max_results: z
+        .number()
+        .optional()
+        .describe("Number of results (5-100, default 10)"),
+      next_token: z
+        .string()
+        .optional()
+        .describe("Pagination token from previous response"),
     },
     async ({ user_id, max_results, next_token }) => {
       try {
-        const { result, rateLimit } = await client.getTimeline(user_id, max_results, next_token);
-        return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+        const { result, rateLimit } = await client.getTimeline(
+          user_id,
+          max_results,
+          next_token,
+        );
+        return {
+          content: [{ type: "text", text: formatResult(result, rateLimit) }],
+        };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );
@@ -232,15 +329,29 @@ function createServer(): McpServer {
     "get_mentions",
     "Fetch recent mentions of the authenticated user.",
     {
-      max_results: z.number().optional().describe("Number of results (5-100, default 10)"),
-      next_token: z.string().optional().describe("Pagination token from previous response"),
+      max_results: z
+        .number()
+        .optional()
+        .describe("Number of results (5-100, default 10)"),
+      next_token: z
+        .string()
+        .optional()
+        .describe("Pagination token from previous response"),
     },
     async ({ max_results, next_token }) => {
       try {
-        const { result, rateLimit } = await client.getMentions(max_results, next_token);
-        return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+        const { result, rateLimit } = await client.getMentions(
+          max_results,
+          next_token,
+        );
+        return {
+          content: [{ type: "text", text: formatResult(result, rateLimit) }],
+        };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );
@@ -250,15 +361,30 @@ function createServer(): McpServer {
     "List followers of a user by their numeric user ID.",
     {
       user_id: z.string().describe("The numeric user ID"),
-      max_results: z.number().optional().describe("Number of results (1-1000, default 100)"),
-      next_token: z.string().optional().describe("Pagination token from previous response"),
+      max_results: z
+        .number()
+        .optional()
+        .describe("Number of results (1-1000, default 100)"),
+      next_token: z
+        .string()
+        .optional()
+        .describe("Pagination token from previous response"),
     },
     async ({ user_id, max_results, next_token }) => {
       try {
-        const { result, rateLimit } = await client.getFollowers(user_id, max_results, next_token);
-        return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+        const { result, rateLimit } = await client.getFollowers(
+          user_id,
+          max_results,
+          next_token,
+        );
+        return {
+          content: [{ type: "text", text: formatResult(result, rateLimit) }],
+        };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );
@@ -268,15 +394,30 @@ function createServer(): McpServer {
     "List who a user follows by their numeric user ID.",
     {
       user_id: z.string().describe("The numeric user ID"),
-      max_results: z.number().optional().describe("Number of results (1-1000, default 100)"),
-      next_token: z.string().optional().describe("Pagination token from previous response"),
+      max_results: z
+        .number()
+        .optional()
+        .describe("Number of results (1-1000, default 100)"),
+      next_token: z
+        .string()
+        .optional()
+        .describe("Pagination token from previous response"),
     },
     async ({ user_id, max_results, next_token }) => {
       try {
-        const { result, rateLimit } = await client.getFollowing(user_id, max_results, next_token);
-        return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+        const { result, rateLimit } = await client.getFollowing(
+          user_id,
+          max_results,
+          next_token,
+        );
+        return {
+          content: [{ type: "text", text: formatResult(result, rateLimit) }],
+        };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );
@@ -295,9 +436,14 @@ function createServer(): McpServer {
       try {
         const id = parseTweetId(tweet_id);
         const { result, rateLimit } = await client.likeTweet(id);
-        return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+        return {
+          content: [{ type: "text", text: formatResult(result, rateLimit) }],
+        };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );
@@ -312,9 +458,14 @@ function createServer(): McpServer {
       try {
         const id = parseTweetId(tweet_id);
         const { result, rateLimit } = await client.retweet(id);
-        return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+        return {
+          content: [{ type: "text", text: formatResult(result, rateLimit) }],
+        };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );
@@ -332,7 +483,10 @@ function createServer(): McpServer {
         const message = await client.getOAuth2Manager().authorize();
         return { content: [{ type: "text", text: message }] };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );
@@ -341,15 +495,29 @@ function createServer(): McpServer {
     "get_bookmarks",
     "Fetch the authenticated user's bookmarked posts. Returns tweets with author info and metrics.",
     {
-      max_results: z.number().optional().describe("Number of results (1-100, default 10)"),
-      next_token: z.string().optional().describe("Pagination token from previous response"),
+      max_results: z
+        .number()
+        .optional()
+        .describe("Number of results (1-100, default 10)"),
+      next_token: z
+        .string()
+        .optional()
+        .describe("Pagination token from previous response"),
     },
     async ({ max_results, next_token }) => {
       try {
-        const { result, rateLimit } = await client.getBookmarks(max_results, next_token);
-        return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+        const { result, rateLimit } = await client.getBookmarks(
+          max_results,
+          next_token,
+        );
+        return {
+          content: [{ type: "text", text: formatResult(result, rateLimit) }],
+        };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );
@@ -364,9 +532,14 @@ function createServer(): McpServer {
       try {
         const id = parseTweetId(tweet_id);
         const { result, rateLimit } = await client.bookmarkTweet(id);
-        return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+        return {
+          content: [{ type: "text", text: formatResult(result, rateLimit) }],
+        };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );
@@ -381,9 +554,14 @@ function createServer(): McpServer {
       try {
         const id = parseTweetId(tweet_id);
         const { result, rateLimit } = await client.unbookmarkTweet(id);
-        return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+        return {
+          content: [{ type: "text", text: formatResult(result, rateLimit) }],
+        };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );
@@ -397,8 +575,15 @@ function createServer(): McpServer {
     "Upload an image or video to X. Returns a media_id that can be attached to posts. Provide the file as base64-encoded data.",
     {
       media_data: z.string().describe("Base64-encoded media file data"),
-      mime_type: z.string().describe("MIME type (e.g. 'image/png', 'image/jpeg', 'video/mp4')"),
-      media_category: z.string().optional().describe("Category: 'tweet_image', 'tweet_gif', or 'tweet_video' (default: tweet_image)"),
+      mime_type: z
+        .string()
+        .describe("MIME type (e.g. 'image/png', 'image/jpeg', 'video/mp4')"),
+      media_category: z
+        .string()
+        .optional()
+        .describe(
+          "Category: 'tweet_image', 'tweet_gif', or 'tweet_video' (default: tweet_image)",
+        ),
     },
     async ({ media_data, mime_type, media_category }) => {
       try {
@@ -408,13 +593,24 @@ function createServer(): McpServer {
           media_category || "tweet_image",
         );
         return {
-          content: [{
-            type: "text",
-            text: formatResult({ media_id: mediaId, message: "Upload complete. Use this media_id in post_tweet." }, rateLimit),
-          }],
+          content: [
+            {
+              type: "text",
+              text: formatResult(
+                {
+                  media_id: mediaId,
+                  message: "Upload complete. Use this media_id in post_tweet.",
+                },
+                rateLimit,
+              ),
+            },
+          ],
         };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
     },
   );
@@ -433,12 +629,17 @@ function createServer(): McpServer {
       try {
         const id = parseTweetId(tweet_id);
         const { result, rateLimit } = await client.getTweetMetrics(id);
-        return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
+        return {
+          content: [{ type: "text", text: formatResult(result, rateLimit) }],
+        };
       } catch (e: unknown) {
-        return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
+        return {
+          content: [{ type: "text", text: `Error: ${(e as Error).message}` }],
+          isError: true,
+        };
       }
-  },
-);
+    },
+  );
 
   return server;
 }
@@ -451,16 +652,43 @@ const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || "0.0.0.0";
 
 const app = express();
+app.disable("x-powered-by");
 app.use(express.json({ limit: "4mb" }));
 
 app.get("/health", (_req: Request, res: Response) => {
   res.json({ status: "ok" });
 });
 
+function tokenMatches(value: string, expected: string): boolean {
+  const valueBuffer = Buffer.from(value);
+  const expectedBuffer = Buffer.from(expected);
+  return (
+    valueBuffer.length === expectedBuffer.length &&
+    timingSafeEqual(valueBuffer, expectedBuffer)
+  );
+}
+
+function requireMcpAuth(req: Request, res: Response, next: NextFunction): void {
+  const authorization = req.headers.authorization;
+  const token = authorization?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+
+  if (!token || !tokenMatches(token, mcpAuthToken)) {
+    res.setHeader("WWW-Authenticate", 'Bearer realm="x-mcp"');
+    res.status(401).json({
+      jsonrpc: "2.0",
+      error: { code: -32001, message: "Unauthorized" },
+      id: null,
+    });
+    return;
+  }
+
+  next();
+}
+
 // Stateful: one transport per session. The session ID is generated by the
 // transport itself and sent back to the client on initialization.
-const streamableTransports: Record<string, StreamableHTTPServerTransport> = {};
-const sseTransports: Record<string, SSEServerTransport> = {};
+const streamableTransports = new Map<string, StreamableHTTPServerTransport>();
+const sseTransports = new Map<string, SSEServerTransport>();
 
 function isJsonRpcInitialize(body: unknown): boolean {
   if (Array.isArray(body)) {
@@ -469,7 +697,12 @@ function isJsonRpcInitialize(body: unknown): boolean {
   return isInitializeRequest(body);
 }
 
-function sendJsonRpcError(res: Response, status: number, code: number, message: string): void {
+function sendJsonRpcError(
+  res: Response,
+  status: number,
+  code: number,
+  message: string,
+): void {
   res.status(status).json({
     jsonrpc: "2.0",
     error: { code, message },
@@ -484,7 +717,7 @@ const mcpHandler = async (req: Request, res: Response) => {
     let transport: StreamableHTTPServerTransport | undefined;
 
     if (sessionId) {
-      transport = streamableTransports[sessionId];
+      transport = streamableTransports.get(sessionId);
       if (!transport) {
         sendJsonRpcError(res, 404, -32001, "Session not found");
         return;
@@ -493,19 +726,24 @@ const mcpHandler = async (req: Request, res: Response) => {
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (sid) => {
-          streamableTransports[sid] = transport!;
+          streamableTransports.set(sid, transport!);
         },
       });
       transport.onclose = () => {
         if (transport?.sessionId) {
-          delete streamableTransports[transport.sessionId];
+          streamableTransports.delete(transport.sessionId);
         }
       };
 
       const server = createServer();
       await server.connect(transport);
     } else {
-      sendJsonRpcError(res, 400, -32000, "Bad Request: No valid session ID provided");
+      sendJsonRpcError(
+        res,
+        400,
+        -32000,
+        "Bad Request: No valid session ID provided",
+      );
       return;
     }
 
@@ -518,15 +756,15 @@ const mcpHandler = async (req: Request, res: Response) => {
   }
 };
 
-app.all("/mcp", mcpHandler);
+app.all("/mcp", requireMcpAuth, mcpHandler);
 
-app.get("/sse", async (_req: Request, res: Response) => {
+app.get("/sse", requireMcpAuth, async (_req: Request, res: Response) => {
   try {
     const transport = new SSEServerTransport("/messages", res);
-    sseTransports[transport.sessionId] = transport;
+    sseTransports.set(transport.sessionId, transport);
 
     transport.onclose = () => {
-      delete sseTransports[transport.sessionId];
+      sseTransports.delete(transport.sessionId);
     };
 
     const server = createServer();
@@ -539,14 +777,14 @@ app.get("/sse", async (_req: Request, res: Response) => {
   }
 });
 
-app.post("/messages", async (req: Request, res: Response) => {
+app.post("/messages", requireMcpAuth, async (req: Request, res: Response) => {
   const sessionId = req.query.sessionId;
   if (typeof sessionId !== "string") {
     res.status(400).send("Missing sessionId parameter");
     return;
   }
 
-  const transport = sseTransports[sessionId];
+  const transport = sseTransports.get(sessionId);
   if (!transport) {
     res.status(404).send("Session not found");
     return;
@@ -563,8 +801,14 @@ app.post("/messages", async (req: Request, res: Response) => {
 });
 
 app.listen(PORT, HOST, () => {
-  console.error(`x-mcp Streamable HTTP server listening on http://${HOST}:${PORT}`);
-  console.error(`  MCP endpoint:  ALL  /mcp  (POST initialize, GET stream, DELETE session)`);
-  console.error(`  SSE endpoint:  GET  /sse  + POST /messages (legacy SSE integrations)`);
+  console.error(
+    `x-mcp Streamable HTTP server listening on http://${HOST}:${PORT}`,
+  );
+  console.error(
+    `  MCP endpoint:  ALL  /mcp  (POST initialize, GET stream, DELETE session)`,
+  );
+  console.error(
+    `  SSE endpoint:  GET  /sse  + POST /messages (legacy SSE integrations)`,
+  );
   console.error(`  Health check:  GET        /health`);
 });

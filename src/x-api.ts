@@ -19,7 +19,28 @@ interface XApiResponse<T = unknown> {
     previous_token?: string;
   };
   includes?: Record<string, unknown[]>;
-  errors?: Array<{ message: string; title?: string; detail?: string; type?: string }>;
+  errors?: Array<{
+    message: string;
+    title?: string;
+    detail?: string;
+    type?: string;
+  }>;
+}
+
+function encodeNumericId(value: string, fieldName: string): string {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(`Invalid ${fieldName}: expected a numeric ID`);
+  }
+  return encodeURIComponent(trimmed);
+}
+
+function encodeUsername(value: string): string {
+  const trimmed = value.trim().replace(/^@/, "");
+  if (!/^[A-Za-z0-9_]{1,15}$/.test(trimmed)) {
+    throw new Error("Invalid username: expected a valid X username");
+  }
+  return encodeURIComponent(trimmed);
 }
 
 export interface XApiConfig {
@@ -44,7 +65,10 @@ export class XApiClient {
       consumer: { key: config.apiKey, secret: config.apiSecret },
       signature_method: "HMAC-SHA1",
       hash_function(baseString, key) {
-        return crypto.createHmac("sha1", key).update(baseString).digest("base64");
+        return crypto
+          .createHmac("sha1", key)
+          .update(baseString)
+          .digest("base64");
       },
     });
     this.token = { key: config.accessToken, secret: config.accessTokenSecret };
@@ -96,7 +120,10 @@ export class XApiClient {
 
   private formatRateLimit(rl: RateLimitInfo): string {
     const resetDate = new Date(rl.reset * 1000);
-    const secondsUntilReset = Math.max(0, Math.ceil((rl.reset * 1000 - Date.now()) / 1000));
+    const secondsUntilReset = Math.max(
+      0,
+      Math.ceil((rl.reset * 1000 - Date.now()) / 1000),
+    );
     return `Rate limit: ${rl.remaining}/${rl.limit} remaining. Resets at ${resetDate.toISOString()} (${secondsUntilReset}s)`;
   }
 
@@ -109,9 +136,8 @@ export class XApiClient {
     // For form-urlencoded bodies, include params in OAuth signature per spec.
     // JSON and multipart (FormData) bodies are excluded from the signature.
     const isFormEncoded = contentType === "application/x-www-form-urlencoded";
-    const signatureData = isFormEncoded && body
-      ? body as Record<string, string>
-      : undefined;
+    const signatureData =
+      isFormEncoded && body ? (body as Record<string, string>) : undefined;
 
     const headers: Record<string, string> = {
       ...this.getOAuthHeaders(url, method, signatureData),
@@ -127,7 +153,9 @@ export class XApiClient {
       if (body instanceof FormData) {
         init.body = body;
       } else if (isFormEncoded) {
-        init.body = new URLSearchParams(body as Record<string, string>).toString();
+        init.body = new URLSearchParams(
+          body as Record<string, string>,
+        ).toString();
       } else {
         init.body = JSON.stringify(body);
       }
@@ -145,7 +173,10 @@ export class XApiClient {
     });
   }
 
-  private async handleResponse<T>(response: Response, operation: string): Promise<{ result: T; rateLimit: string }> {
+  private async handleResponse<T>(
+    response: Response,
+    operation: string,
+  ): Promise<{ result: T; rateLimit: string }> {
     const rateLimit = this.parseRateLimit(response.headers);
     const rateLimitStr = rateLimit ? this.formatRateLimit(rateLimit) : "";
 
@@ -170,9 +201,9 @@ export class XApiClient {
 
     if (!response.ok) {
       const errorBody = data as unknown as XApiResponse;
-      const errorMsg = errorBody.errors
-        ?.map((e) => e.detail || e.message)
-        .join("; ") || text.slice(0, 500);
+      const errorMsg =
+        errorBody.errors?.map((e) => e.detail || e.message).join("; ") ||
+        text.slice(0, 500);
       throw new Error(
         `${operation} failed (HTTP ${response.status}): ${errorMsg}. ${rateLimitStr}`,
       );
@@ -185,7 +216,10 @@ export class XApiClient {
     if (this.authenticatedUserId) return this.authenticatedUserId;
     const url = `${API_BASE}/users/me`;
     const response = await this.oauthFetch(url, "GET");
-    const { result } = await this.handleResponse<XApiResponse<{ id: string }>>(response, "getAuthenticatedUser");
+    const { result } = await this.handleResponse<XApiResponse<{ id: string }>>(
+      response,
+      "getAuthenticatedUser",
+    );
     this.authenticatedUserId = result.data!.id;
     return this.authenticatedUserId;
   }
@@ -201,9 +235,10 @@ export class XApiClient {
     media_ids?: string[];
   }) {
     const disclosure = process.env.X_AGENT_DISCLOSURE?.trim();
-    const text = disclosure && !params.text.includes(disclosure)
-      ? `${params.text}\n\n${disclosure}`
-      : params.text;
+    const text =
+      disclosure && !params.text.includes(disclosure)
+        ? `${params.text}\n\n${disclosure}`
+        : params.text;
     const body: Record<string, unknown> = { text };
 
     if (params.reply_to) {
@@ -230,27 +265,36 @@ export class XApiClient {
   }
 
   async deleteTweet(tweetId: string) {
-    const response = await this.oauthFetch(`${API_BASE}/tweets/${tweetId}`, "DELETE");
+    const response = await this.oauthFetch(
+      `${API_BASE}/tweets/${encodeNumericId(tweetId, "tweet ID")}`,
+      "DELETE",
+    );
     return this.handleResponse(response, "deleteTweet");
   }
 
   async getTweet(tweetId: string) {
     const params = new URLSearchParams({
-      "tweet.fields": "created_at,public_metrics,author_id,conversation_id,in_reply_to_user_id,referenced_tweets,attachments,entities,lang,note_tweet",
+      "tweet.fields":
+        "created_at,public_metrics,author_id,conversation_id,in_reply_to_user_id,referenced_tweets,attachments,entities,lang,note_tweet",
       expansions: "author_id,referenced_tweets.id,attachments.media_keys",
       "user.fields": "name,username,verified,profile_image_url,public_metrics",
       "media.fields": "url,preview_image_url,type,width,height,alt_text",
     });
-    const url = `${API_BASE}/tweets/${tweetId}?${params}`;
+    const url = `${API_BASE}/tweets/${encodeNumericId(tweetId, "tweet ID")}?${params}`;
     const response = await this.bearerFetch(url);
     return this.handleResponse(response, "getTweet");
   }
 
-  async searchTweets(query: string, maxResults: number = 10, nextToken?: string) {
+  async searchTweets(
+    query: string,
+    maxResults: number = 10,
+    nextToken?: string,
+  ) {
     const params = new URLSearchParams({
       query,
       max_results: Math.min(Math.max(maxResults, 10), 100).toString(),
-      "tweet.fields": "created_at,public_metrics,author_id,conversation_id,entities,lang,note_tweet",
+      "tweet.fields":
+        "created_at,public_metrics,author_id,conversation_id,entities,lang,note_tweet",
       expansions: "author_id,attachments.media_keys",
       "user.fields": "name,username,verified,profile_image_url",
       "media.fields": "url,preview_image_url,type",
@@ -266,14 +310,15 @@ export class XApiClient {
 
   async getUser(params: { username?: string; userId?: string }) {
     const fields = new URLSearchParams({
-      "user.fields": "created_at,description,public_metrics,verified,profile_image_url,url,location,pinned_tweet_id",
+      "user.fields":
+        "created_at,description,public_metrics,verified,profile_image_url,url,location,pinned_tweet_id",
     });
 
     let url: string;
     if (params.username) {
-      url = `${API_BASE}/users/by/username/${params.username}?${fields}`;
+      url = `${API_BASE}/users/by/username/${encodeUsername(params.username)}?${fields}`;
     } else if (params.userId) {
-      url = `${API_BASE}/users/${params.userId}?${fields}`;
+      url = `${API_BASE}/users/${encodeNumericId(params.userId, "user ID")}?${fields}`;
     } else {
       throw new Error("Either username or userId must be provided");
     }
@@ -282,17 +327,22 @@ export class XApiClient {
     return this.handleResponse(response, "getUser");
   }
 
-  async getTimeline(userId: string, maxResults: number = 10, nextToken?: string) {
+  async getTimeline(
+    userId: string,
+    maxResults: number = 10,
+    nextToken?: string,
+  ) {
     const params = new URLSearchParams({
       max_results: Math.min(Math.max(maxResults, 5), 100).toString(),
-      "tweet.fields": "created_at,public_metrics,author_id,conversation_id,entities,lang,note_tweet",
+      "tweet.fields":
+        "created_at,public_metrics,author_id,conversation_id,entities,lang,note_tweet",
       expansions: "author_id,attachments.media_keys,referenced_tweets.id",
       "user.fields": "name,username,verified",
       "media.fields": "url,preview_image_url,type",
     });
     if (nextToken) params.set("pagination_token", nextToken);
 
-    const url = `${API_BASE}/users/${userId}/tweets?${params}`;
+    const url = `${API_BASE}/users/${encodeNumericId(userId, "user ID")}/tweets?${params}`;
     const response = await this.bearerFetch(url);
     return this.handleResponse(response, "getTimeline");
   }
@@ -301,37 +351,48 @@ export class XApiClient {
     const userId = await this.getAuthenticatedUserId();
     const params = new URLSearchParams({
       max_results: Math.min(Math.max(maxResults, 5), 100).toString(),
-      "tweet.fields": "created_at,public_metrics,author_id,conversation_id,entities,note_tweet",
+      "tweet.fields":
+        "created_at,public_metrics,author_id,conversation_id,entities,note_tweet",
       expansions: "author_id",
       "user.fields": "name,username,verified",
     });
     if (nextToken) params.set("pagination_token", nextToken);
 
-    const url = `${API_BASE}/users/${userId}/mentions?${params}`;
+    const url = `${API_BASE}/users/${encodeNumericId(userId, "authenticated user ID")}/mentions?${params}`;
     const response = await this.oauthFetch(url, "GET");
     return this.handleResponse(response, "getMentions");
   }
 
-  async getFollowers(userId: string, maxResults: number = 100, nextToken?: string) {
+  async getFollowers(
+    userId: string,
+    maxResults: number = 100,
+    nextToken?: string,
+  ) {
     const params = new URLSearchParams({
       max_results: Math.min(Math.max(maxResults, 1), 1000).toString(),
-      "user.fields": "created_at,description,public_metrics,verified,profile_image_url",
+      "user.fields":
+        "created_at,description,public_metrics,verified,profile_image_url",
     });
     if (nextToken) params.set("pagination_token", nextToken);
 
-    const url = `${API_BASE}/users/${userId}/followers?${params}`;
+    const url = `${API_BASE}/users/${encodeNumericId(userId, "user ID")}/followers?${params}`;
     const response = await this.bearerFetch(url);
     return this.handleResponse(response, "getFollowers");
   }
 
-  async getFollowing(userId: string, maxResults: number = 100, nextToken?: string) {
+  async getFollowing(
+    userId: string,
+    maxResults: number = 100,
+    nextToken?: string,
+  ) {
     const params = new URLSearchParams({
       max_results: Math.min(Math.max(maxResults, 1), 1000).toString(),
-      "user.fields": "created_at,description,public_metrics,verified,profile_image_url",
+      "user.fields":
+        "created_at,description,public_metrics,verified,profile_image_url",
     });
     if (nextToken) params.set("pagination_token", nextToken);
 
-    const url = `${API_BASE}/users/${userId}/following?${params}`;
+    const url = `${API_BASE}/users/${encodeNumericId(userId, "user ID")}/following?${params}`;
     const response = await this.bearerFetch(url);
     return this.handleResponse(response, "getFollowing");
   }
@@ -340,17 +401,25 @@ export class XApiClient {
 
   async likeTweet(tweetId: string) {
     const userId = await this.getAuthenticatedUserId();
-    const response = await this.oauthFetch(`${API_BASE}/users/${userId}/likes`, "POST", {
-      tweet_id: tweetId,
-    });
+    const response = await this.oauthFetch(
+      `${API_BASE}/users/${encodeNumericId(userId, "authenticated user ID")}/likes`,
+      "POST",
+      {
+        tweet_id: encodeNumericId(tweetId, "tweet ID"),
+      },
+    );
     return this.handleResponse(response, "likeTweet");
   }
 
   async retweet(tweetId: string) {
     const userId = await this.getAuthenticatedUserId();
-    const response = await this.oauthFetch(`${API_BASE}/users/${userId}/retweets`, "POST", {
-      tweet_id: tweetId,
-    });
+    const response = await this.oauthFetch(
+      `${API_BASE}/users/${encodeNumericId(userId, "authenticated user ID")}/retweets`,
+      "POST",
+      {
+        tweet_id: encodeNumericId(tweetId, "tweet ID"),
+      },
+    );
     return this.handleResponse(response, "retweet");
   }
 
@@ -377,10 +446,9 @@ export class XApiClient {
       },
       "application/x-www-form-urlencoded",
     );
-    const { result: initData } = await this.handleResponse<{ media_id_string: string }>(
-      initRes,
-      "uploadMedia:INIT",
-    );
+    const { result: initData } = await this.handleResponse<{
+      media_id_string: string;
+    }>(initRes, "uploadMedia:INIT");
     const mediaId = initData.media_id_string;
 
     // APPEND -- upload in 1MB chunks (multipart, params excluded from OAuth sig)
@@ -397,7 +465,9 @@ export class XApiClient {
 
       if (!appendRes.ok) {
         const text = await appendRes.text();
-        throw new Error(`uploadMedia:APPEND segment ${i} failed (HTTP ${appendRes.status}): ${text}`);
+        throw new Error(
+          `uploadMedia:APPEND segment ${i} failed (HTTP ${appendRes.status}): ${text}`,
+        );
       }
     }
 
@@ -411,17 +481,30 @@ export class XApiClient {
       },
       "application/x-www-form-urlencoded",
     );
-    const finalizeResult = await this.handleResponse(finalizeRes, "uploadMedia:FINALIZE");
+    const finalizeResult = await this.handleResponse(
+      finalizeRes,
+      "uploadMedia:FINALIZE",
+    );
 
     return { mediaId, ...finalizeResult };
   }
 
-  private getOAuthHeaders(url: string, method: string, data?: Record<string, string>): Record<string, string> {
-    const requestData: { url: string; method: string; data?: Record<string, string> } = { url, method };
+  private getOAuthHeaders(
+    url: string,
+    method: string,
+    data?: Record<string, string>,
+  ): Record<string, string> {
+    const requestData: {
+      url: string;
+      method: string;
+      data?: Record<string, string>;
+    } = { url, method };
     if (data) {
       requestData.data = data;
     }
-    const authHeader = this.oauth.toHeader(this.oauth.authorize(requestData, this.token));
+    const authHeader = this.oauth.toHeader(
+      this.oauth.authorize(requestData, this.token),
+    );
     return { Authorization: authHeader.Authorization };
   }
 
@@ -431,30 +514,35 @@ export class XApiClient {
     const userId = await this.getAuthenticatedUserId();
     const params = new URLSearchParams({
       max_results: Math.min(Math.max(maxResults, 1), 100).toString(),
-      "tweet.fields": "created_at,public_metrics,author_id,conversation_id,entities,lang,note_tweet",
+      "tweet.fields":
+        "created_at,public_metrics,author_id,conversation_id,entities,lang,note_tweet",
       expansions: "author_id,attachments.media_keys",
       "user.fields": "name,username,verified,profile_image_url",
       "media.fields": "url,preview_image_url,type",
     });
     if (nextToken) params.set("pagination_token", nextToken);
 
-    const url = `${API_BASE}/users/${userId}/bookmarks?${params}`;
+    const url = `${API_BASE}/users/${encodeNumericId(userId, "authenticated user ID")}/bookmarks?${params}`;
     const response = await this.oauth2Fetch(url, "GET");
     return this.handleResponse(response, "getBookmarks");
   }
 
   async bookmarkTweet(tweetId: string) {
     const userId = await this.getAuthenticatedUserId();
-    const response = await this.oauth2Fetch(`${API_BASE}/users/${userId}/bookmarks`, "POST", {
-      tweet_id: tweetId,
-    });
+    const response = await this.oauth2Fetch(
+      `${API_BASE}/users/${encodeNumericId(userId, "authenticated user ID")}/bookmarks`,
+      "POST",
+      {
+        tweet_id: encodeNumericId(tweetId, "tweet ID"),
+      },
+    );
     return this.handleResponse(response, "bookmarkTweet");
   }
 
   async unbookmarkTweet(tweetId: string) {
     const userId = await this.getAuthenticatedUserId();
     const response = await this.oauth2Fetch(
-      `${API_BASE}/users/${userId}/bookmarks/${tweetId}`,
+      `${API_BASE}/users/${encodeNumericId(userId, "authenticated user ID")}/bookmarks/${encodeNumericId(tweetId, "tweet ID")}`,
       "DELETE",
     );
     return this.handleResponse(response, "unbookmarkTweet");
@@ -466,7 +554,7 @@ export class XApiClient {
     const params = new URLSearchParams({
       "tweet.fields": "public_metrics,non_public_metrics,organic_metrics",
     });
-    const url = `${API_BASE}/tweets/${tweetId}?${params}`;
+    const url = `${API_BASE}/tweets/${encodeNumericId(tweetId, "tweet ID")}?${params}`;
     // Metrics require user context (OAuth 1.0a) for non_public_metrics
     const response = await this.oauthFetch(url, "GET");
     return this.handleResponse(response, "getTweetMetrics");

@@ -2,7 +2,7 @@
 
 An MCP (Model Context Protocol) server that gives AI agents full access to the X (Twitter) API. Post tweets, search, read timelines, like, retweet, upload media -- all through natural language.
 
-Works with **Claude Code**, **Claude Desktop**, **OpenAI Codex**, **Cursor**, **Windsurf**, **Cline**, and any other MCP-compatible client.
+Works with **Claude Code**, **Claude Desktop**, **OpenAI Codex**, **Cursor**, **Windsurf**, **Cline**, and any other MCP-compatible client or AI agent framework that can speak MCP over Streamable HTTP (or legacy HTTP+SSE).
 
 **If you're an LLM/AI agent helping a user set up this project, read [`LLMs.md`](./LLMs.md) for step-by-step instructions you can walk the user through.**
 
@@ -109,7 +109,10 @@ X_API_SECRET=your_secret_key
 X_BEARER_TOKEN=your_bearer_token
 X_ACCESS_TOKEN=your_access_token
 X_ACCESS_TOKEN_SECRET=your_access_token_secret
+MCP_AUTH_TOKEN=generate_a_long_random_token
 ```
+
+`MCP_AUTH_TOKEN` protects your remote MCP server. Treat it like a password: every MCP client must send it as `Authorization: Bearer <token>`.
 
 Optional:
 
@@ -129,15 +132,24 @@ npm start
 ```
 You should see: `x-mcp Streamable HTTP server listening on http://0.0.0.0:3000`
 
-**Remote (Railway/Render example):**
+**Remote (Render web service):**
 
-| Field | Value |
-|-------|-------|
+Render should run this project as a **Web Service** because it exposes HTTP endpoints (`/mcp`, `/sse`, `/messages`, `/health`). It should not be a Static Site, Cron Job, or Background Worker.
+
+| Render field | Value |
+|--------------|-------|
+| **New resource** | Web Service |
+| **Source** | Your GitHub/GitLab/Bitbucket repo or public Git URL |
+| **Branch** | `main` (or whichever branch you deploy from) |
+| **Runtime / Language** | Node |
+| **Root Directory** | Leave blank if this repo is the service root |
 | **Build Command** | `npm install && npm run build` |
 | **Start Command** | `npm start` |
-| **Environment** | All 5 `X_API_*` vars (Railway/Render auto-set `PORT`) |
+| **Health Check Path** | `/health` |
+| **Auto-Deploy** | On Commit is fine; choose After CI Checks Pass if your repo has required CI |
+| **Environment Variables** | All 5 `X_API_*` vars plus `MCP_AUTH_TOKEN`; optional `X_AGENT_DISCLOSURE`, `X_OAUTH2_CLIENT_ID`, `X_OAUTH2_CLIENT_SECRET` |
 
-Health check URL: `https://<your-app>.up.railway.app/health` or `https://<your-app>.onrender.com/health`
+Render provides `PORT` automatically and the server binds to `0.0.0.0`, which Render requires for public web services. After deploy, health check URL: `https://<your-render-service-name>.onrender.com/health`.
 
 ---
 
@@ -253,15 +265,23 @@ Open Cline's MCP settings (click the MCP Servers icon in Cline's top nav > Confi
 }
 ```
 
-### Other MCP Clients
+### Other MCP Clients and Agent Frameworks
 
-This is a standard Streamable HTTP MCP server. Point your client at:
+This is a standard Streamable HTTP MCP server, so you can use it with MCP-compatible agent runtimes and clients beyond the examples above. Point the client/agent at:
 
 ```
 http://localhost:3000/mcp
 ```
 
-(or your remote URL) using the HTTP transport type. Required environment variables on the server: `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`, `X_BEARER_TOKEN`.
+(or your remote URL) using the HTTP/Streamable HTTP transport type. If a client only supports legacy HTTP+SSE, use `/sse` instead. Required environment variables on the server: `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`, `X_BEARER_TOKEN`, `MCP_AUTH_TOKEN`.
+
+For remote deployments, clients must send:
+
+```
+Authorization: Bearer <your MCP_AUTH_TOKEN>
+```
+
+Treat any connected agent as authorized to use the X account behind this server. Only give the MCP URL and token to agents/clients you trust.
 
 ### Poke
 
@@ -270,6 +290,8 @@ Use the deployed SSE MCP endpoint:
 ```
 https://<your-app>.up.railway.app/sse
 ```
+
+In Poke, enter your `MCP_AUTH_TOKEN` in the integration's **API Key** field. Poke sends it as `Authorization: Bearer <token>`.
 
 Poke will receive `/messages?sessionId=...` from the SSE handshake and use that for client messages.
 
