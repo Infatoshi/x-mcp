@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/infatoshi-x-mcp-badge.png)](https://mseep.ai/app/infatoshi-x-mcp)
+
 # x-mcp
 
 An MCP (Model Context Protocol) server that gives AI agents full access to the X (Twitter) API. Post tweets, search, read timelines, like, retweet, upload media -- all through natural language.
