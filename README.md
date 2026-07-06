@@ -1,101 +1,172 @@
 # x-mcp
 
-An MCP (Model Context Protocol) server that gives AI agents full access to the X (Twitter) API. Post tweets, search, read timelines, like, retweet, upload media -- all through natural language.
+An MCP (Model Context Protocol) server for personal X API access. It supports reading posts, searching, timelines, mentions, metrics, bookmarks, posting, replies, quote posts, deletes, engagements, and media upload.
 
-Works with **Claude Code**, **Claude Desktop**, **OpenAI Codex**, **Cursor**, **Windsurf**, **Cline**, and any other MCP-compatible client.
+This fork is hardened for personal-account use:
 
-**If you're an LLM/AI agent helping a user set up this project, read [`LLMs.md`](./LLMs.md) for step-by-step instructions you can walk the user through.**
+- Writes are blocked by default.
+- Dry-run is enabled by default.
+- Real writes require `confirm: true` by default.
+- Riskier write categories have separate allow flags.
+- Outgoing posts no longer contain any hardcoded model name or account handle.
+- OAuth2 bookmark tokens are stored locally, ignored by git, and written with `0600` permissions.
+- OAuth2 defaults to read-only bookmark scope; `bookmark.write` must be added intentionally.
 
----
+If you're an LLM/AI agent helping a user set up this project, read [`LLMs.md`](./LLMs.md).
 
-## What Can It Do?
+## Tools
 
-| Category | Tools | What You Can Say | Status |
-|----------|-------|------------------|--------|
-| **Post** | `post_tweet`, `quote_tweet`, `delete_tweet` | "Post 'hello world' on X" | OK |
-| **Read** | `get_tweet`, `search_tweets`, `get_timeline`, `get_mentions` | "Show me @elonmusk's latest posts" | OK |
-| **Users** | `get_user`, `get_followers`, `get_following` | "Look up @openai" / "Who does this user follow?" | OK |
-| **Engage** | `retweet` | "Retweet this" | OK |
-| **Media** | `upload_media` | "Upload this image and post it with the caption..." | OK |
-| **Analytics** | `get_metrics` | "How many impressions did my last post get?" | OK |
-| **Bookmarks** | `get_bookmarks`, `bookmark_tweet`, `unbookmark_tweet` | "Show my bookmarks" | Requires Basic+ tier |
-| **Reply** | `reply_to_tweet` | "Reply to this tweet saying thanks" | Restricted (see below) |
-| **Like** | `like_tweet` | "Like that tweet" | Removed on Free tier (see below) |
+| Category | Tools | Default behavior |
+| --- | --- | --- |
+| Safety | `get_safety_status` | Shows local safety settings without secrets |
+| Read | `get_tweet`, `search_tweets`, `get_timeline`, `get_mentions` | Enabled |
+| Users | `get_user`, `get_followers`, `get_following` | Enabled |
+| Metrics | `get_metrics` | Enabled; private metrics require user context |
+| Bookmarks read | `setup_oauth2`, `get_bookmarks` | Requires OAuth2 setup |
+| Post | `post_tweet`, `quote_tweet` | Blocked unless writes are enabled |
+| Reply | `reply_to_tweet` | Blocked unless replies are separately enabled |
+| Delete | `delete_tweet` | Blocked unless deletes are separately enabled |
+| Engage | `like_tweet`, `retweet` | Blocked unless engagements are separately enabled |
+| Bookmarks write | `bookmark_tweet`, `unbookmark_tweet` | Blocked unless bookmark writes are separately enabled |
+| Media | `upload_media` | Blocked unless media uploads are separately enabled |
 
-Accepts tweet URLs or IDs interchangeably -- paste `https://x.com/user/status/123` or just `123`.
-
----
+Tweet IDs can be raw IDs or URLs such as `https://x.com/user/status/123`.
 
 ## Setup
 
-### 1. Clone and build
-
 ```bash
-git clone https://github.com/INFATOSHI/x-mcp.git
+git clone https://github.com/agentiker/x-mcp.git
 cd x-mcp
 npm install
 npm run build
 ```
 
-### 2. Get your X API credentials
+## X API Credentials
 
-You need 5 credentials from the [X Developer Portal](https://developer.x.com/en/portal/dashboard). Here's exactly how to get them:
+Create an app in the [X Developer Portal](https://developer.x.com/en/portal/dashboard), then collect:
 
-#### a) Create an app
+- `X_API_KEY`
+- `X_API_SECRET`
+- `X_ACCESS_TOKEN`
+- `X_ACCESS_TOKEN_SECRET`
+- `X_BEARER_TOKEN`
 
-1. Go to the [X Developer Portal](https://developer.x.com/en/portal/dashboard)
-2. Sign in with your X account
-3. Go to **Apps** in the left sidebar
-4. Click **Create App** (you may need to sign up for a developer account first)
-5. Give it a name (e.g., `my-x-mcp`)
-6. You'll immediately see your **Consumer Key** (API Key), **Secret Key** (API Secret), and **Bearer Token**
-7. **Save all three now** -- the secret won't be shown again
+For writes, your X app must have **Read and write** permissions, and the Access Token/Secret must be generated after those permissions are set.
 
-#### b) Enable write permissions
+For bookmark OAuth2, set the app callback/redirect URI to match:
 
-By default, new apps only have Read permissions. You need Read and Write to post tweets, like, retweet, etc.
+```text
+http://127.0.0.1:3219/callback
+```
 
-1. In your app's page, scroll down to **User authentication settings**
-2. Click **Set up**
-3. Set **App permissions** to **Read and write**
-4. Set **Type of App** to **Web App, Automated App or Bot**
-5. Set **Callback URI / Redirect URL** to `https://localhost` (required but won't be used)
-6. Set **Website URL** to any valid URL (e.g., `https://x.com`)
-7. Click **Save**
+You can change it with `X_OAUTH2_REDIRECT_URI`, but the value in the X Developer Portal must match exactly.
 
-#### c) Generate access tokens (with write permissions)
-
-After enabling write permissions, you need to generate (or regenerate) your Access Token and Secret so they carry the new permissions:
-
-1. Go back to your app's **Keys and Tokens** page
-2. Under **Access Token and Secret**, click **Regenerate**
-3. Save both the **Access Token** and **Access Token Secret**
-
-If you skip step (b) before generating tokens, your tokens will be Read-only and posting will fail with a 403 error.
-
-### 3. Configure credentials
-
-Copy the example env file and fill in your 5 credentials:
+## Environment
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env`:
+Fill in your credentials:
 
-```
+```env
 X_API_KEY=your_consumer_key
 X_API_SECRET=your_secret_key
-X_BEARER_TOKEN=your_bearer_token
 X_ACCESS_TOKEN=your_access_token
 X_ACCESS_TOKEN_SECRET=your_access_token_secret
+X_BEARER_TOKEN=your_bearer_token
 ```
 
----
+Safe defaults are already in `.env.example`:
 
-## Connect to Your Client
+```env
+X_MCP_ENABLE_WRITES=false
+X_MCP_DRY_RUN=true
+X_MCP_REQUIRE_CONFIRMATION=true
 
-Pick your client below. You only need to follow one section.
+X_MCP_ALLOW_POSTS=true
+X_MCP_ALLOW_REPLIES=false
+X_MCP_ALLOW_DELETES=false
+X_MCP_ALLOW_ENGAGEMENTS=false
+X_MCP_ALLOW_BOOKMARKS_WRITE=false
+X_MCP_ALLOW_MEDIA_UPLOADS=false
+```
+
+With these defaults, read tools work, but write tools are blocked before any request reaches X.
+
+To preview writes without sending anything to X:
+
+```env
+X_MCP_ENABLE_WRITES=true
+X_MCP_DRY_RUN=true
+X_MCP_REQUIRE_CONFIRMATION=true
+```
+
+Then call a write tool with `confirm: true`. The tool returns a preview.
+
+To allow real posts:
+
+```env
+X_MCP_ENABLE_WRITES=true
+X_MCP_DRY_RUN=false
+X_MCP_REQUIRE_CONFIRMATION=true
+X_MCP_ALLOW_POSTS=true
+```
+
+Then call `post_tweet` or `quote_tweet` with `confirm: true`.
+
+Only enable higher-risk flags when you explicitly need them:
+
+```env
+X_MCP_ALLOW_REPLIES=true
+X_MCP_ALLOW_DELETES=true
+X_MCP_ALLOW_ENGAGEMENTS=true
+X_MCP_ALLOW_BOOKMARKS_WRITE=true
+X_MCP_ALLOW_MEDIA_UPLOADS=true
+```
+
+Optional post disclosure:
+
+```env
+X_MCP_DISCLOSURE_TEXT=[AI-assisted draft]
+```
+
+Leave it blank for no disclosure. Use `\n` for line breaks.
+
+## OAuth2 Bookmarks
+
+Bookmark read/write uses OAuth2 user authorization. Configure:
+
+```env
+X_OAUTH2_CLIENT_ID=your_oauth2_client_id
+X_OAUTH2_CLIENT_SECRET=your_oauth2_client_secret
+X_OAUTH2_REDIRECT_URI=http://127.0.0.1:3219/callback
+X_OAUTH2_SCOPES=bookmark.read tweet.read users.read offline.access
+X_OAUTH2_TOKEN_FILE=
+```
+
+If `X_OAUTH2_TOKEN_FILE` is blank, tokens are stored in `.oauth2-tokens.json`. This file is git-ignored and written with `0600` permissions.
+
+After the MCP server is connected, run the `setup_oauth2` tool once. It opens the X authorization URL in your browser and stores the returned refresh token locally.
+
+To use `bookmark_tweet` or `unbookmark_tweet`, set:
+
+```env
+X_OAUTH2_SCOPES=bookmark.read bookmark.write tweet.read users.read offline.access
+X_MCP_ALLOW_BOOKMARKS_WRITE=true
+```
+
+Then re-run `setup_oauth2` so the stored OAuth2 token has the write scope.
+
+## MCP Client Config
+
+Build first:
+
+```bash
+npm run build
+```
+
+Use an absolute path to `dist/index.js`.
 
 ### Claude Code
 
@@ -103,14 +174,9 @@ Pick your client below. You only need to follow one section.
 claude mcp add --scope user x-twitter -- node /ABSOLUTE/PATH/TO/x-mcp/dist/index.js
 ```
 
-Replace `/ABSOLUTE/PATH/TO/x-mcp` with the actual path where you cloned the repo. Then restart Claude Code.
+If you configure env vars in the client instead of `.env`, include both credentials and safety settings.
 
-### Claude Desktop
-
-Add to your `claude_desktop_config.json`:
-
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+### Claude Desktop / Cursor / Windsurf / Cline
 
 ```json
 {
@@ -123,51 +189,25 @@ Add to your `claude_desktop_config.json`:
         "X_API_SECRET": "your_secret_key",
         "X_ACCESS_TOKEN": "your_access_token",
         "X_ACCESS_TOKEN_SECRET": "your_access_token_secret",
-        "X_BEARER_TOKEN": "your_bearer_token"
+        "X_BEARER_TOKEN": "your_bearer_token",
+        "X_OAUTH2_SCOPES": "bookmark.read tweet.read users.read offline.access",
+        "X_MCP_ENABLE_WRITES": "false",
+        "X_MCP_DRY_RUN": "true",
+        "X_MCP_REQUIRE_CONFIRMATION": "true",
+        "X_MCP_ALLOW_POSTS": "true",
+        "X_MCP_ALLOW_REPLIES": "false",
+        "X_MCP_ALLOW_DELETES": "false",
+        "X_MCP_ALLOW_ENGAGEMENTS": "false",
+        "X_MCP_ALLOW_BOOKMARKS_WRITE": "false",
+        "X_MCP_ALLOW_MEDIA_UPLOADS": "false",
+        "X_MCP_DISCLOSURE_TEXT": ""
       }
     }
   }
 }
 ```
-
-### Cursor
-
-Add to your Cursor MCP config:
-
-- **Global** (all projects): `~/.cursor/mcp.json`
-- **Project-scoped**: `.cursor/mcp.json` in your project root
-
-```json
-{
-  "mcpServers": {
-    "x-twitter": {
-      "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/x-mcp/dist/index.js"],
-      "env": {
-        "X_API_KEY": "your_consumer_key",
-        "X_API_SECRET": "your_secret_key",
-        "X_ACCESS_TOKEN": "your_access_token",
-        "X_ACCESS_TOKEN_SECRET": "your_access_token_secret",
-        "X_BEARER_TOKEN": "your_bearer_token"
-      }
-    }
-  }
-}
-```
-
-You can also verify the connection in Cursor Settings > MCP Servers.
 
 ### OpenAI Codex
-
-**Option A: CLI**
-
-```bash
-codex mcp add x-twitter --env X_API_KEY=your_consumer_key --env X_API_SECRET=your_secret_key --env X_ACCESS_TOKEN=your_access_token --env X_ACCESS_TOKEN_SECRET=your_access_token_secret --env X_BEARER_TOKEN=your_bearer_token -- node /ABSOLUTE/PATH/TO/x-mcp/dist/index.js
-```
-
-**Option B: config.toml**
-
-Add to `~/.codex/config.toml` (global) or `.codex/config.toml` (project-scoped):
 
 ```toml
 [mcp_servers.x-twitter]
@@ -180,127 +220,68 @@ X_API_SECRET = "your_secret_key"
 X_ACCESS_TOKEN = "your_access_token"
 X_ACCESS_TOKEN_SECRET = "your_access_token_secret"
 X_BEARER_TOKEN = "your_bearer_token"
+X_OAUTH2_SCOPES = "bookmark.read tweet.read users.read offline.access"
+X_MCP_ENABLE_WRITES = "false"
+X_MCP_DRY_RUN = "true"
+X_MCP_REQUIRE_CONFIRMATION = "true"
+X_MCP_ALLOW_POSTS = "true"
+X_MCP_ALLOW_REPLIES = "false"
+X_MCP_ALLOW_DELETES = "false"
+X_MCP_ALLOW_ENGAGEMENTS = "false"
+X_MCP_ALLOW_BOOKMARKS_WRITE = "false"
+X_MCP_ALLOW_MEDIA_UPLOADS = "false"
+X_MCP_DISCLOSURE_TEXT = ""
 ```
 
-### Windsurf
+## Testing
 
-Add to `~/.codeium/windsurf/mcp_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "x-twitter": {
-      "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/x-mcp/dist/index.js"],
-      "env": {
-        "X_API_KEY": "your_consumer_key",
-        "X_API_SECRET": "your_secret_key",
-        "X_ACCESS_TOKEN": "your_access_token",
-        "X_ACCESS_TOKEN_SECRET": "your_access_token_secret",
-        "X_BEARER_TOKEN": "your_bearer_token"
-      }
-    }
-  }
-}
+```bash
+npm test
+npm audit
 ```
 
-You can also add it from Windsurf Settings > Cascade > MCP Servers.
+Tests write a review artifact to:
 
-### Cline (VS Code)
-
-Open Cline's MCP settings (click the MCP Servers icon in Cline's top nav > Configure), then add to `cline_mcp_settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "x-twitter": {
-      "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/x-mcp/dist/index.js"],
-      "env": {
-        "X_API_KEY": "your_consumer_key",
-        "X_API_SECRET": "your_secret_key",
-        "X_ACCESS_TOKEN": "your_access_token",
-        "X_ACCESS_TOKEN_SECRET": "your_access_token_secret",
-        "X_BEARER_TOKEN": "your_bearer_token"
-      },
-      "alwaysAllow": [],
-      "disabled": false
-    }
-  }
-}
+```text
+test-artifacts/safety-results.json
 ```
 
-### Other MCP Clients
+## X API Notes
 
-This is a standard stdio MCP server. For any MCP-compatible client, point it at:
+X API permissions and paid-tier availability change over time. The server enforces local safety gates, but X may still reject calls based on your plan, app permissions, rate limits, or policy restrictions.
 
-```
-node /ABSOLUTE/PATH/TO/x-mcp/dist/index.js
-```
+Known constraints:
 
-With these environment variables: `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`, `X_BEARER_TOKEN`.
-
----
-
-## API Restrictions (as of 2025-2026)
-
-X has progressively restricted what automated/API clients can do. Here's what affects x-mcp:
-
-### Likes removed from Free tier (Aug 2025)
-The `like_tweet` endpoint (`POST /2/users/:id/likes`) was removed from the Free API tier in August 2025. If you're on the Free tier, `like_tweet` will return a permissions error. Paid tiers (Basic, Pro, Enterprise) are unaffected.
-
-### Programmatic replies restricted (Feb 2026)
-Replies via the API now only succeed if the original post's author @mentioned you or quoted your post. This applies to **all self-serve tiers** (Free, Basic, Pro, Pay-Per-Use). Only Enterprise is exempt. Use `quote_tweet` as a workaround.
-
-### Bookmarks require Basic+ tier
-Bookmark endpoints have never been available on the Free tier. You need at least Basic ($200/mo) to use `get_bookmarks`, `bookmark_tweet`, and `unbookmark_tweet`.
-
-### Post volume caps
-Free tier: 500 posts/month. Basic: 10,000/month. Pro: 1,000,000/month.
-
----
+- Likes may be unavailable on some lower API tiers.
+- Programmatic replies may be restricted unless the original author mentioned or quoted you.
+- Bookmark endpoints require OAuth2 authorization and may require a paid tier.
+- Free/basic tiers may have monthly post caps.
 
 ## Troubleshooting
 
-### 403 "oauth1-permissions" error when posting
-Your Access Token was generated before you enabled write permissions. Go to the X Developer Portal, ensure App permissions are set to "Read and write", then **Regenerate** your Access Token and Secret.
+### 403 `oauth1-permissions`
+
+Your Access Token was generated before enabling app write permissions. Set the app to **Read and write**, then regenerate Access Token and Secret.
 
 ### 401 Unauthorized
-Double-check that all 5 credentials in your `.env` are correct and that there are no extra spaces or line breaks.
 
-### 429 Rate Limited
-The error message includes exactly when the rate limit resets. Wait until then, or reduce request frequency.
+Check all credentials for extra spaces, stale tokens, or missing env vars.
 
-### Reply fails with a permissions/restriction error
-As of Feb 2026, X restricts programmatic replies via the API on all self-serve tiers. You can only reply if the original author @mentions you or quotes your post. This applies to Free, Basic, Pro, and Pay-Per-Use tiers (Enterprise is exempt). Use `quote_tweet` as a workaround.
+### Write tool says `X_MCP_ENABLE_WRITES is not true`
 
-### Server shows "Connected" but tools aren't used
-Make sure you added the server with the correct scope (user/global, not project-scoped if you want it everywhere), then restart your client.
+This is the default safe mode. Set `X_MCP_ENABLE_WRITES=true` only when you want write tools to proceed to the next safety gate.
 
----
+### Write tool says `requires confirm: true`
 
-## Rate Limiting
+Review the preview and repeat the same tool call with `confirm: true`.
 
-Every response includes rate limit info: remaining requests, total limit, and reset time. When a limit is hit, you get a clear error with the exact reset timestamp.
+### Dry-run returns a preview instead of posting
 
-## Pagination
+Set `X_MCP_DRY_RUN=false` for real writes.
 
-List endpoints return a `next_token` in the response. Pass it back to get the next page of results. Works on: `search_tweets`, `get_timeline`, `get_mentions`, `get_followers`, `get_following`.
+### OAuth2 callback fails
 
-## Search Query Syntax
-
-The `search_tweets` tool supports X's full query language:
-
-- `from:username` -- posts by a specific user
-- `to:username` -- replies to a specific user
-- `#hashtag` -- posts containing a hashtag
-- `"exact phrase"` -- exact text match
-- `has:media` / `has:links` / `has:images` -- filter by content type
-- `is:reply` / `-is:retweet` -- filter by post type
-- `lang:en` -- filter by language
-- Combine with spaces (AND) or `OR`
-
----
+Make sure `X_OAUTH2_REDIRECT_URI` exactly matches the callback URI in the X Developer Portal.
 
 ## License
 

@@ -1,16 +1,16 @@
 import crypto from "crypto";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import http from "http";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const TOKEN_FILE = path.resolve(__dirname, "..", ".oauth2-tokens.json");
 const AUTH_URL = "https://twitter.com/i/oauth2/authorize";
 const TOKEN_URL = "https://api.twitter.com/2/oauth2/token";
-const REDIRECT_URI = "http://127.0.0.1:3219/callback";
-const SCOPES = "bookmark.read bookmark.write tweet.read users.read offline.access";
+const DEFAULT_TOKEN_FILE = path.resolve(__dirname, "..", ".oauth2-tokens.json");
+const DEFAULT_REDIRECT_URI = "http://127.0.0.1:3219/callback";
+const DEFAULT_SCOPES = "bookmark.read tweet.read users.read offline.access";
 
 interface OAuth2Tokens {
   access_token: string;
@@ -18,21 +18,38 @@ interface OAuth2Tokens {
   expires_at: number; // unix ms
 }
 
+export interface OAuth2ManagerOptions {
+  clientId: string;
+  clientSecret: string;
+  redirectUri?: string;
+  tokenFile?: string;
+  scopes?: string;
+}
+
 export class OAuth2Manager {
   private tokens: OAuth2Tokens | null = null;
   private clientId: string;
   private clientSecret: string;
+  private redirectUri: string;
+  private tokenFile: string;
+  private scopes: string;
 
-  constructor(clientId: string, clientSecret: string) {
-    this.clientId = clientId;
-    this.clientSecret = clientSecret;
+  constructor(options: OAuth2ManagerOptions) {
+    this.clientId = options.clientId;
+    this.clientSecret = options.clientSecret;
+    this.redirectUri = options.redirectUri || DEFAULT_REDIRECT_URI;
+    this.tokenFile = options.tokenFile
+      ? path.resolve(options.tokenFile)
+      : DEFAULT_TOKEN_FILE;
+    this.scopes = options.scopes || DEFAULT_SCOPES;
     this.loadTokens();
   }
 
   private loadTokens() {
     try {
-      if (fs.existsSync(TOKEN_FILE)) {
-        const raw = fs.readFileSync(TOKEN_FILE, "utf-8");
+      if (fs.existsSync(this.tokenFile)) {
+        fs.chmodSync(this.tokenFile, 0o600);
+        const raw = fs.readFileSync(this.tokenFile, "utf-8");
         this.tokens = JSON.parse(raw);
       }
     } catch {
@@ -42,7 +59,9 @@ export class OAuth2Manager {
 
   private saveTokens(tokens: OAuth2Tokens) {
     this.tokens = tokens;
-    fs.writeFileSync(TOKEN_FILE, JSON.stringify(tokens, null, 2));
+    fs.mkdirSync(path.dirname(this.tokenFile), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(this.tokenFile, JSON.stringify(tokens, null, 2), { mode: 0o600 });
+    fs.chmodSync(this.tokenFile, 0o600);
   }
 
   get isAuthorized(): boolean {
@@ -87,7 +106,7 @@ export class OAuth2Manager {
     if (!response.ok) {
       const text = await response.text();
       this.tokens = null;
-      try { fs.unlinkSync(TOKEN_FILE); } catch {}
+      try { fs.unlinkSync(this.tokenFile); } catch {}
       throw new Error(
         `OAuth 2.0 token refresh failed (HTTP ${response.status}): ${text}. Re-run 'setup_oauth2'.`,
       );
@@ -112,6 +131,14 @@ export class OAuth2Manager {
    * Resolves when the callback is received and tokens are stored.
    */
   async authorize(): Promise<string> {
+    const redirectUrl = new URL(this.redirectUri);
+    if (!["http:", "https:"].includes(redirectUrl.protocol)) {
+      throw new Error("X_OAUTH2_REDIRECT_URI must be an http or https URL.");
+    }
+    if (!redirectUrl.port) {
+      throw new Error("X_OAUTH2_REDIRECT_URI must include a local port, for example http://127.0.0.1:3219/callback.");
+    }
+
     const codeVerifier = crypto.randomBytes(32).toString("base64url");
     const codeChallenge = crypto
       .createHash("sha256")
@@ -122,8 +149,8 @@ export class OAuth2Manager {
     const authParams = new URLSearchParams({
       response_type: "code",
       client_id: this.clientId,
-      redirect_uri: REDIRECT_URI,
-      scope: SCOPES,
+      redirect_uri: this.redirectUri,
+      scope: this.scopes,
       state,
       code_challenge: codeChallenge,
       code_challenge_method: "S256",
@@ -132,10 +159,12 @@ export class OAuth2Manager {
     const authUrl = `${AUTH_URL}?${authParams}`;
 
     return new Promise<string>((resolve, reject) => {
+      let timeout: NodeJS.Timeout;
+
       const server = http.createServer(async (req, res) => {
         try {
-          const url = new URL(req.url!, `http://127.0.0.1:3219`);
-          if (url.pathname !== "/callback") {
+          const url = new URL(req.url!, this.redirectUri);
+          if (url.pathname !== redirectUrl.pathname) {
             res.writeHead(404);
             res.end("Not found");
             return;
@@ -147,6 +176,7 @@ export class OAuth2Manager {
           if (!code || returnedState !== state) {
             res.writeHead(400);
             res.end("Invalid callback: missing code or state mismatch");
+            clearTimeout(timeout);
             server.close();
             reject(new Error("OAuth callback failed: state mismatch or missing code"));
             return;
@@ -156,7 +186,7 @@ export class OAuth2Manager {
           const tokenBody = new URLSearchParams({
             grant_type: "authorization_code",
             code,
-            redirect_uri: REDIRECT_URI,
+            redirect_uri: this.redirectUri,
             code_verifier: codeVerifier,
             client_id: this.clientId,
           });
@@ -174,6 +204,7 @@ export class OAuth2Manager {
             const text = await tokenRes.text();
             res.writeHead(500);
             res.end(`Token exchange failed: ${text}`);
+            clearTimeout(timeout);
             server.close();
             reject(new Error(`Token exchange failed (HTTP ${tokenRes.status}): ${text}`));
             return;
@@ -193,25 +224,28 @@ export class OAuth2Manager {
 
           res.writeHead(200, { "Content-Type": "text/html" });
           res.end("<h1>Authorization successful!</h1><p>You can close this tab and return to your MCP client.</p>");
+          clearTimeout(timeout);
           server.close();
           resolve("OAuth 2.0 authorization complete. Bookmark access is now enabled.");
         } catch (err) {
+          clearTimeout(timeout);
           server.close();
           reject(err);
         }
       });
 
-      server.listen(3219, "127.0.0.1", () => {
-        const cmd = process.platform === "darwin"
-          ? `open "${authUrl}"`
-          : process.platform === "win32"
-            ? `start "${authUrl}"`
-            : `xdg-open "${authUrl}"`;
-        exec(cmd);
+      server.listen(Number(redirectUrl.port), redirectUrl.hostname, () => {
+        if (process.platform === "darwin") {
+          execFile("open", [authUrl]);
+        } else if (process.platform === "win32") {
+          execFile("cmd", ["/c", "start", "", authUrl]);
+        } else {
+          execFile("xdg-open", [authUrl]);
+        }
       });
 
       // Timeout after 2 minutes
-      setTimeout(() => {
+      timeout = setTimeout(() => {
         server.close();
         reject(new Error("OAuth 2.0 authorization timed out after 2 minutes."));
       }, 120_000);

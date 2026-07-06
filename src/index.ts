@@ -6,44 +6,20 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import { z } from "zod";
+import { loadConfig } from "./config.js";
+import { parseTweetId } from "./twitter.js";
 import { XApiClient } from "./x-api.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, "..", ".env") });
 
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}. See .env.example for required variables.`);
-  }
-  return value;
-}
-
-const client = new XApiClient({
-  apiKey: requireEnv("X_API_KEY"),
-  apiSecret: requireEnv("X_API_SECRET"),
-  accessToken: requireEnv("X_ACCESS_TOKEN"),
-  accessTokenSecret: requireEnv("X_ACCESS_TOKEN_SECRET"),
-  bearerToken: requireEnv("X_BEARER_TOKEN"),
-  oauth2ClientId: process.env.X_OAUTH2_CLIENT_ID,
-  oauth2ClientSecret: process.env.X_OAUTH2_CLIENT_SECRET,
-});
+const appConfig = loadConfig();
+const client = new XApiClient(appConfig);
 
 const server = new McpServer({
   name: "x-mcp",
   version: "1.0.0",
 });
-
-// --- Helper to extract tweet ID from URL or raw ID ---
-function parseTweetId(input: string): string {
-  // Handle URLs like https://x.com/user/status/123456 or https://twitter.com/user/status/123456
-  const match = input.match(/(?:twitter\.com|x\.com)\/\w+\/status\/(\d+)/);
-  if (match) return match[1];
-  // Otherwise treat as raw ID
-  const stripped = input.trim();
-  if (/^\d+$/.test(stripped)) return stripped;
-  throw new Error(`Invalid tweet ID or URL: ${input}`);
-}
 
 function formatResult(data: unknown, rateLimit: string): string {
   const output: Record<string, unknown> = { data };
@@ -51,26 +27,43 @@ function formatResult(data: unknown, rateLimit: string): string {
   return JSON.stringify(output, null, 2);
 }
 
+const confirmField = z.boolean().optional().describe("Required as true for real write operations when X_MCP_REQUIRE_CONFIRMATION=true.");
+
+// ============================================================
+// SAFETY
+// ============================================================
+
+server.tool(
+  "get_safety_status",
+  "Show the current local write-safety settings for this MCP server. Does not reveal API credentials.",
+  {},
+  async () => ({
+    content: [{ type: "text", text: formatResult(client.getSafetyStatus(), "") }],
+  }),
+);
+
 // ============================================================
 // TWEET TOOLS
 // ============================================================
 
 server.tool(
   "post_tweet",
-  "Create a new post on X (Twitter). Supports text, polls, and media attachments.",
+  "Create a new post on X (Twitter). Server-side safety defaults block writes unless enabled; dry-run is on by default; pass confirm: true when confirmation is required.",
   {
-    text: z.string().describe("The text content of the tweet (max 280 characters)"),
-    poll_options: z.array(z.string()).optional().describe("Poll options (2-4 choices)"),
+    text: z.string().min(1).describe("The text content of the tweet (max 280 characters after optional disclosure)"),
+    poll_options: z.array(z.string().min(1)).min(2).max(4).optional().describe("Poll options (2-4 choices)"),
     poll_duration_minutes: z.number().optional().describe("Poll duration in minutes (default 1440 = 24h)"),
     media_ids: z.array(z.string()).optional().describe("Media IDs to attach (from upload_media)"),
+    confirm: confirmField,
   },
-  async ({ text, poll_options, poll_duration_minutes, media_ids }) => {
+  async ({ text, poll_options, poll_duration_minutes, media_ids, confirm }) => {
     try {
       const { result, rateLimit } = await client.postTweet({
         text,
         poll_options,
         poll_duration_minutes,
         media_ids,
+        confirm,
       });
       return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
     } catch (e: unknown) {
@@ -81,19 +74,21 @@ server.tool(
 
 server.tool(
   "reply_to_tweet",
-  "Reply to an existing post on X. Provide the tweet ID or URL to reply to. NOTE: As of Feb 2026, X restricts programmatic replies on all self-serve tiers (Free, Basic, Pro, Pay-Per-Use) -- you can only reply if the original author @mentions you or quotes your post. Otherwise the API will return an error. Enterprise is exempt. Consider using quote_tweet as an alternative.",
+  "Reply to an existing post on X. Server-side safety defaults block replies; dry-run is on by default. X also restricts programmatic replies on self-serve tiers unless the original author @mentions you or quotes your post.",
   {
     tweet_id: z.string().describe("The tweet ID or URL to reply to"),
-    text: z.string().describe("The reply text"),
+    text: z.string().min(1).describe("The reply text"),
     media_ids: z.array(z.string()).optional().describe("Media IDs to attach"),
+    confirm: confirmField,
   },
-  async ({ tweet_id, text, media_ids }) => {
+  async ({ tweet_id, text, media_ids, confirm }) => {
     try {
       const id = parseTweetId(tweet_id);
       const { result, rateLimit } = await client.postTweet({
         text,
         reply_to: id,
         media_ids,
+        confirm,
       });
       return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
     } catch (e: unknown) {
@@ -104,19 +99,21 @@ server.tool(
 
 server.tool(
   "quote_tweet",
-  "Quote retweet a post on X. Adds your commentary above the quoted post.",
+  "Quote post on X. Server-side safety defaults block writes unless enabled; dry-run is on by default; pass confirm: true when confirmation is required.",
   {
     tweet_id: z.string().describe("The tweet ID or URL to quote"),
-    text: z.string().describe("Your commentary text"),
+    text: z.string().min(1).describe("Your commentary text"),
     media_ids: z.array(z.string()).optional().describe("Media IDs to attach"),
+    confirm: confirmField,
   },
-  async ({ tweet_id, text, media_ids }) => {
+  async ({ tweet_id, text, media_ids, confirm }) => {
     try {
       const id = parseTweetId(tweet_id);
       const { result, rateLimit } = await client.postTweet({
         text,
         quote_tweet_id: id,
         media_ids,
+        confirm,
       });
       return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
     } catch (e: unknown) {
@@ -127,14 +124,15 @@ server.tool(
 
 server.tool(
   "delete_tweet",
-  "Delete a post on X by its ID.",
+  "Delete a post on X by its ID. Disabled by default; enable X_MCP_ALLOW_DELETES and pass confirm: true for real writes.",
   {
     tweet_id: z.string().describe("The tweet ID or URL to delete"),
+    confirm: confirmField,
   },
-  async ({ tweet_id }) => {
+  async ({ tweet_id, confirm }) => {
     try {
       const id = parseTweetId(tweet_id);
-      const { result, rateLimit } = await client.deleteTweet(id);
+      const { result, rateLimit } = await client.deleteTweet(id, confirm);
       return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
     } catch (e: unknown) {
       return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
@@ -282,14 +280,15 @@ server.tool(
 
 server.tool(
   "like_tweet",
-  "Like a post on X. NOTE: As of Aug 2025, this endpoint was removed from the Free API tier. Only works on paid tiers (Basic, Pro, Enterprise).",
+  "Like a post on X. Disabled by default; enable X_MCP_ALLOW_ENGAGEMENTS and pass confirm: true for real writes. This endpoint is unavailable on some X API tiers.",
   {
     tweet_id: z.string().describe("The tweet ID or URL to like"),
+    confirm: confirmField,
   },
-  async ({ tweet_id }) => {
+  async ({ tweet_id, confirm }) => {
     try {
       const id = parseTweetId(tweet_id);
-      const { result, rateLimit } = await client.likeTweet(id);
+      const { result, rateLimit } = await client.likeTweet(id, confirm);
       return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
     } catch (e: unknown) {
       return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
@@ -299,14 +298,15 @@ server.tool(
 
 server.tool(
   "retweet",
-  "Retweet a post on X.",
+  "Retweet a post on X. Disabled by default; enable X_MCP_ALLOW_ENGAGEMENTS and pass confirm: true for real writes.",
   {
     tweet_id: z.string().describe("The tweet ID or URL to retweet"),
+    confirm: confirmField,
   },
-  async ({ tweet_id }) => {
+  async ({ tweet_id, confirm }) => {
     try {
       const id = parseTweetId(tweet_id);
-      const { result, rateLimit } = await client.retweet(id);
+      const { result, rateLimit } = await client.retweet(id, confirm);
       return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
     } catch (e: unknown) {
       return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
@@ -351,14 +351,15 @@ server.tool(
 
 server.tool(
   "bookmark_tweet",
-  "Bookmark a post on X.",
+  "Bookmark a post on X. Disabled by default; enable X_MCP_ALLOW_BOOKMARKS_WRITE and pass confirm: true for real writes.",
   {
     tweet_id: z.string().describe("The tweet ID or URL to bookmark"),
+    confirm: confirmField,
   },
-  async ({ tweet_id }) => {
+  async ({ tweet_id, confirm }) => {
     try {
       const id = parseTweetId(tweet_id);
-      const { result, rateLimit } = await client.bookmarkTweet(id);
+      const { result, rateLimit } = await client.bookmarkTweet(id, confirm);
       return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
     } catch (e: unknown) {
       return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
@@ -368,14 +369,15 @@ server.tool(
 
 server.tool(
   "unbookmark_tweet",
-  "Remove a bookmark from a post on X.",
+  "Remove a bookmark from a post on X. Disabled by default; enable X_MCP_ALLOW_BOOKMARKS_WRITE and pass confirm: true for real writes.",
   {
     tweet_id: z.string().describe("The tweet ID or URL to unbookmark"),
+    confirm: confirmField,
   },
-  async ({ tweet_id }) => {
+  async ({ tweet_id, confirm }) => {
     try {
       const id = parseTweetId(tweet_id);
-      const { result, rateLimit } = await client.unbookmarkTweet(id);
+      const { result, rateLimit } = await client.unbookmarkTweet(id, confirm);
       return { content: [{ type: "text", text: formatResult(result, rateLimit) }] };
     } catch (e: unknown) {
       return { content: [{ type: "text", text: `Error: ${(e as Error).message}` }], isError: true };
@@ -389,23 +391,25 @@ server.tool(
 
 server.tool(
   "upload_media",
-  "Upload an image or video to X. Returns a media_id that can be attached to posts. Provide the file as base64-encoded data.",
+  "Upload an image or video to X. Disabled by default; enable X_MCP_ALLOW_MEDIA_UPLOADS and pass confirm: true for real writes. Provide the file as base64-encoded data.",
   {
     media_data: z.string().describe("Base64-encoded media file data"),
     mime_type: z.string().describe("MIME type (e.g. 'image/png', 'image/jpeg', 'video/mp4')"),
     media_category: z.string().optional().describe("Category: 'tweet_image', 'tweet_gif', or 'tweet_video' (default: tweet_image)"),
+    confirm: confirmField,
   },
-  async ({ media_data, mime_type, media_category }) => {
+  async ({ media_data, mime_type, media_category, confirm }) => {
     try {
-      const { mediaId, rateLimit } = await client.uploadMedia(
+      const { result, rateLimit } = await client.uploadMedia(
         media_data,
         mime_type,
         media_category || "tweet_image",
+        confirm,
       );
       return {
         content: [{
           type: "text",
-          text: formatResult({ media_id: mediaId, message: "Upload complete. Use this media_id in post_tweet." }, rateLimit),
+          text: formatResult(result, rateLimit),
         }],
       };
     } catch (e: unknown) {

@@ -1,6 +1,14 @@
 import crypto from "crypto";
 import OAuth from "oauth-1.0a";
 import { OAuth2Manager } from "./oauth2.js";
+import type { WriteSafetyConfig } from "./config.js";
+import {
+  applyDisclosure,
+  assertTweetLength,
+  assertWriteAllowed,
+  type DryRunResult,
+  type WriteCapability,
+} from "./safety.js";
 
 const API_BASE = "https://api.x.com/2";
 const UPLOAD_BASE = "https://upload.twitter.com/1.1";
@@ -30,7 +38,13 @@ export interface XApiConfig {
   bearerToken: string;
   oauth2ClientId?: string;
   oauth2ClientSecret?: string;
+  oauth2RedirectUri?: string;
+  oauth2TokenFile?: string;
+  oauth2Scopes?: string;
+  safety: WriteSafetyConfig;
 }
+
+type OperationResult<T = unknown> = Promise<{ result: T | DryRunResult; rateLimit: string }>;
 
 export class XApiClient {
   private oauth: OAuth;
@@ -49,14 +63,33 @@ export class XApiClient {
     });
     this.token = { key: config.accessToken, secret: config.accessTokenSecret };
     this.bearerToken = config.bearerToken;
-    this.oauth2 = new OAuth2Manager(
-      config.oauth2ClientId || config.apiKey,
-      config.oauth2ClientSecret || config.apiSecret,
-    );
+    this.oauth2 = new OAuth2Manager({
+      clientId: config.oauth2ClientId || config.apiKey,
+      clientSecret: config.oauth2ClientSecret || config.apiSecret,
+      redirectUri: config.oauth2RedirectUri,
+      tokenFile: config.oauth2TokenFile,
+      scopes: config.oauth2Scopes,
+    });
   }
 
   getOAuth2Manager(): OAuth2Manager {
     return this.oauth2;
+  }
+
+  getSafetyStatus(): Record<string, unknown> {
+    return {
+      writes_enabled: this.config.safety.writesEnabled,
+      dry_run: this.config.safety.dryRun,
+      require_confirmation: this.config.safety.requireConfirmation,
+      allow_posts: this.config.safety.allowPosts,
+      allow_replies: this.config.safety.allowReplies,
+      allow_deletes: this.config.safety.allowDeletes,
+      allow_engagements: this.config.safety.allowEngagements,
+      allow_bookmarks_write: this.config.safety.allowBookmarksWrite,
+      allow_media_uploads: this.config.safety.allowMediaUploads,
+      disclosure_configured: this.config.safety.disclosureText.length > 0,
+      oauth2_authorized: this.oauth2.isAuthorized,
+    };
   }
 
   private async oauth2Fetch(
@@ -199,13 +232,23 @@ export class XApiClient {
     poll_options?: string[];
     poll_duration_minutes?: number;
     media_ids?: string[];
-  }) {
-    // Auto-append agent disclosure to all outgoing tweets
-    const model = process.env.CLAUDE_MODEL || "Claude Opus 4.6";
-    const disclosure = `\n\n[${model} on behalf of @elliotarledge]`;
-    const text = params.text.includes("on behalf of @elliotarledge")
-      ? params.text  // avoid double-appending
-      : params.text + disclosure;
+    confirm?: boolean;
+  }): OperationResult {
+    if (params.reply_to && params.quote_tweet_id) {
+      throw new Error("Cannot reply and quote in the same post.");
+    }
+
+    if (params.poll_options) {
+      if (params.poll_options.length < 2 || params.poll_options.length > 4) {
+        throw new Error("Polls require 2 to 4 options.");
+      }
+      for (const option of params.poll_options) {
+        if (!option.trim()) throw new Error("Poll options cannot be empty.");
+      }
+    }
+
+    const text = applyDisclosure(params.text, this.config.safety.disclosureText);
+    assertTweetLength(text);
     const body: Record<string, unknown> = { text };
 
     if (params.reply_to) {
@@ -227,11 +270,42 @@ export class XApiClient {
       body.media = { media_ids: params.media_ids };
     }
 
+    const capability: WriteCapability = params.reply_to
+      ? "reply"
+      : params.quote_tweet_id
+        ? "quote"
+        : "post";
+    const dryRun = assertWriteAllowed(this.config.safety, {
+      capability,
+      description: capability === "reply"
+        ? "Replying to a post"
+        : capability === "quote"
+          ? "Quote posting"
+          : "Posting to X",
+      confirm: params.confirm,
+      preview: {
+        endpoint: "POST /2/tweets",
+        body,
+      },
+    });
+    if (dryRun) return { result: dryRun, rateLimit: "" };
+
     const response = await this.oauthFetch(`${API_BASE}/tweets`, "POST", body);
     return this.handleResponse(response, "postTweet");
   }
 
-  async deleteTweet(tweetId: string) {
+  async deleteTweet(tweetId: string, confirm?: boolean): OperationResult {
+    const dryRun = assertWriteAllowed(this.config.safety, {
+      capability: "delete",
+      description: "Deleting a post",
+      confirm,
+      preview: {
+        endpoint: "DELETE /2/tweets/:id",
+        tweet_id: tweetId,
+      },
+    });
+    if (dryRun) return { result: dryRun, rateLimit: "" };
+
     const response = await this.oauthFetch(`${API_BASE}/tweets/${tweetId}`, "DELETE");
     return this.handleResponse(response, "deleteTweet");
   }
@@ -340,7 +414,18 @@ export class XApiClient {
 
   // --- Engagement operations ---
 
-  async likeTweet(tweetId: string) {
+  async likeTweet(tweetId: string, confirm?: boolean): OperationResult {
+    const dryRun = assertWriteAllowed(this.config.safety, {
+      capability: "like",
+      description: "Liking a post",
+      confirm,
+      preview: {
+        endpoint: "POST /2/users/:id/likes",
+        tweet_id: tweetId,
+      },
+    });
+    if (dryRun) return { result: dryRun, rateLimit: "" };
+
     const userId = await this.getAuthenticatedUserId();
     const response = await this.oauthFetch(`${API_BASE}/users/${userId}/likes`, "POST", {
       tweet_id: tweetId,
@@ -348,7 +433,18 @@ export class XApiClient {
     return this.handleResponse(response, "likeTweet");
   }
 
-  async retweet(tweetId: string) {
+  async retweet(tweetId: string, confirm?: boolean): OperationResult {
+    const dryRun = assertWriteAllowed(this.config.safety, {
+      capability: "retweet",
+      description: "Retweeting a post",
+      confirm,
+      preview: {
+        endpoint: "POST /2/users/:id/retweets",
+        tweet_id: tweetId,
+      },
+    });
+    if (dryRun) return { result: dryRun, rateLimit: "" };
+
     const userId = await this.getAuthenticatedUserId();
     const response = await this.oauthFetch(`${API_BASE}/users/${userId}/retweets`, "POST", {
       tweet_id: tweetId,
@@ -362,10 +458,24 @@ export class XApiClient {
     mediaData: string,
     mimeType: string,
     mediaCategory: string = "tweet_image",
-  ) {
+    confirm?: boolean,
+  ): Promise<{ result: { media_id: string; message: string } | DryRunResult; rateLimit: string }> {
     const uploadUrl = `${UPLOAD_BASE}/media/upload.json`;
     const buffer = Buffer.from(mediaData, "base64");
     const totalBytes = buffer.length;
+
+    const dryRun = assertWriteAllowed(this.config.safety, {
+      capability: "media",
+      description: "Uploading media",
+      confirm,
+      preview: {
+        endpoint: "POST /1.1/media/upload.json",
+        mime_type: mimeType,
+        media_category: mediaCategory,
+        total_bytes: totalBytes,
+      },
+    });
+    if (dryRun) return { result: dryRun, rateLimit: "" };
 
     // INIT
     const initRes = await this.oauthFetch(
@@ -415,7 +525,13 @@ export class XApiClient {
     );
     const finalizeResult = await this.handleResponse(finalizeRes, "uploadMedia:FINALIZE");
 
-    return { mediaId, ...finalizeResult };
+    return {
+      result: {
+        media_id: mediaId,
+        message: "Upload complete. Use this media_id in post_tweet.",
+      },
+      rateLimit: finalizeResult.rateLimit,
+    };
   }
 
   private getOAuthHeaders(url: string, method: string, data?: Record<string, string>): Record<string, string> {
@@ -445,7 +561,18 @@ export class XApiClient {
     return this.handleResponse(response, "getBookmarks");
   }
 
-  async bookmarkTweet(tweetId: string) {
+  async bookmarkTweet(tweetId: string, confirm?: boolean): OperationResult {
+    const dryRun = assertWriteAllowed(this.config.safety, {
+      capability: "bookmark",
+      description: "Bookmarking a post",
+      confirm,
+      preview: {
+        endpoint: "POST /2/users/:id/bookmarks",
+        tweet_id: tweetId,
+      },
+    });
+    if (dryRun) return { result: dryRun, rateLimit: "" };
+
     const userId = await this.getAuthenticatedUserId();
     const response = await this.oauth2Fetch(`${API_BASE}/users/${userId}/bookmarks`, "POST", {
       tweet_id: tweetId,
@@ -453,7 +580,18 @@ export class XApiClient {
     return this.handleResponse(response, "bookmarkTweet");
   }
 
-  async unbookmarkTweet(tweetId: string) {
+  async unbookmarkTweet(tweetId: string, confirm?: boolean): OperationResult {
+    const dryRun = assertWriteAllowed(this.config.safety, {
+      capability: "unbookmark",
+      description: "Removing a bookmark",
+      confirm,
+      preview: {
+        endpoint: "DELETE /2/users/:id/bookmarks/:tweet_id",
+        tweet_id: tweetId,
+      },
+    });
+    if (dryRun) return { result: dryRun, rateLimit: "" };
+
     const userId = await this.getAuthenticatedUserId();
     const response = await this.oauth2Fetch(
       `${API_BASE}/users/${userId}/bookmarks/${tweetId}`,

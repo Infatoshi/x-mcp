@@ -1,4 +1,7 @@
 node_modules/
 dist/
 .env
+.oauth2-tokens.json
+*.oauth2-tokens.json
+test-artifacts/
 *.tsbuildinfo
