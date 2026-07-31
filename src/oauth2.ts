@@ -41,8 +41,18 @@ export class OAuth2Manager {
   }
 
   private saveTokens(tokens: OAuth2Tokens) {
+    const tokenFile = fs.openSync(TOKEN_FILE, "w", 0o600);
+
+    try {
+      if (process.platform !== "win32") {
+        fs.fchmodSync(tokenFile, 0o600);
+      }
+      fs.writeFileSync(tokenFile, JSON.stringify(tokens, null, 2), "utf-8");
+    } finally {
+      fs.closeSync(tokenFile);
+    }
+
     this.tokens = tokens;
-    fs.writeFileSync(TOKEN_FILE, JSON.stringify(tokens, null, 2));
   }
 
   get isAuthorized(): boolean {
