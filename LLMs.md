@@ -14,6 +14,10 @@ x-mcp is an MCP (Model Context Protocol) server that connects AI agents to the X
 - An X (Twitter) account
 - Access to a terminal
 
+For read-only setup, the user can use an Xquik API key instead of X Developer
+Portal credentials. Posting, media upload, bookmarks, likes, retweets, and
+metrics still need the X API credentials in Step 2.
+
 ---
 
 ## Step 1: Clone and Build
@@ -100,6 +104,17 @@ X_BEARER_TOKEN=<Bearer Token from step 2a>
 X_ACCESS_TOKEN=<Access Token from step 2c>
 X_ACCESS_TOKEN_SECRET=<Access Token Secret from step 2c>
 ```
+
+For read-only Xquik mode, set these values instead of `X_BEARER_TOKEN`:
+
+```
+XQUIK_API_KEY=<Xquik API key>
+XQUIK_BASE_URL=https://xquik.com/api/v1
+```
+
+With `XQUIK_API_KEY` set, `get_tweet`, `search_tweets`, `get_user`,
+`get_timeline`, `get_followers`, and `get_following` use Xquik. Write tools
+still need the X API credentials.
 
 ---
 

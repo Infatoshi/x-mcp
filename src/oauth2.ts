@@ -41,8 +41,18 @@ export class OAuth2Manager {
   }
 
   private saveTokens(tokens: OAuth2Tokens) {
+    const tokenFile = fs.openSync(TOKEN_FILE, "w", 0o600);
+
+    try {
+      if (process.platform !== "win32") {
+        fs.fchmodSync(tokenFile, 0o600);
+      }
+      fs.writeFileSync(tokenFile, JSON.stringify(tokens, null, 2), "utf-8");
+    } finally {
+      fs.closeSync(tokenFile);
+    }
+
     this.tokens = tokens;
-    fs.writeFileSync(TOKEN_FILE, JSON.stringify(tokens, null, 2));
   }
 
   get isAuthorized(): boolean {
@@ -112,6 +122,12 @@ export class OAuth2Manager {
    * Resolves when the callback is received and tokens are stored.
    */
   async authorize(): Promise<string> {
+    if (!this.clientId || !this.clientSecret) {
+      throw new Error(
+        "Missing X OAuth 2.0 credentials. Set X_OAUTH2_CLIENT_ID and X_OAUTH2_CLIENT_SECRET, or X_API_KEY and X_API_SECRET.",
+      );
+    }
+
     const codeVerifier = crypto.randomBytes(32).toString("base64url");
     const codeChallenge = crypto
       .createHash("sha256")
