@@ -5,6 +5,13 @@ import { OAuth2Manager } from "./oauth2.js";
 const API_BASE = "https://api.x.com/2";
 const UPLOAD_BASE = "https://upload.twitter.com/1.1";
 
+// Path segments come from tool callers. Encode them so a value with
+// "/", "?" or "#" stays one segment and cannot change the endpoint
+// or inject query parameters.
+function seg(value: string): string {
+  return encodeURIComponent(value);
+}
+
 interface RateLimitInfo {
   limit: number;
   remaining: number;
@@ -232,7 +239,7 @@ export class XApiClient {
   }
 
   async deleteTweet(tweetId: string) {
-    const response = await this.oauthFetch(`${API_BASE}/tweets/${tweetId}`, "DELETE");
+    const response = await this.oauthFetch(`${API_BASE}/tweets/${seg(tweetId)}`, "DELETE");
     return this.handleResponse(response, "deleteTweet");
   }
 
@@ -243,7 +250,7 @@ export class XApiClient {
       "user.fields": "name,username,verified,profile_image_url,public_metrics",
       "media.fields": "url,preview_image_url,type,width,height,alt_text",
     });
-    const url = `${API_BASE}/tweets/${tweetId}?${params}`;
+    const url = `${API_BASE}/tweets/${seg(tweetId)}?${params}`;
     const response = await this.bearerFetch(url);
     return this.handleResponse(response, "getTweet");
   }
@@ -273,9 +280,9 @@ export class XApiClient {
 
     let url: string;
     if (params.username) {
-      url = `${API_BASE}/users/by/username/${params.username}?${fields}`;
+      url = `${API_BASE}/users/by/username/${seg(params.username)}?${fields}`;
     } else if (params.userId) {
-      url = `${API_BASE}/users/${params.userId}?${fields}`;
+      url = `${API_BASE}/users/${seg(params.userId)}?${fields}`;
     } else {
       throw new Error("Either username or userId must be provided");
     }
@@ -294,7 +301,7 @@ export class XApiClient {
     });
     if (nextToken) params.set("pagination_token", nextToken);
 
-    const url = `${API_BASE}/users/${userId}/tweets?${params}`;
+    const url = `${API_BASE}/users/${seg(userId)}/tweets?${params}`;
     const response = await this.bearerFetch(url);
     return this.handleResponse(response, "getTimeline");
   }
@@ -309,7 +316,7 @@ export class XApiClient {
     });
     if (nextToken) params.set("pagination_token", nextToken);
 
-    const url = `${API_BASE}/users/${userId}/mentions?${params}`;
+    const url = `${API_BASE}/users/${seg(userId)}/mentions?${params}`;
     const response = await this.oauthFetch(url, "GET");
     return this.handleResponse(response, "getMentions");
   }
@@ -321,7 +328,7 @@ export class XApiClient {
     });
     if (nextToken) params.set("pagination_token", nextToken);
 
-    const url = `${API_BASE}/users/${userId}/followers?${params}`;
+    const url = `${API_BASE}/users/${seg(userId)}/followers?${params}`;
     const response = await this.bearerFetch(url);
     return this.handleResponse(response, "getFollowers");
   }
@@ -333,7 +340,7 @@ export class XApiClient {
     });
     if (nextToken) params.set("pagination_token", nextToken);
 
-    const url = `${API_BASE}/users/${userId}/following?${params}`;
+    const url = `${API_BASE}/users/${seg(userId)}/following?${params}`;
     const response = await this.bearerFetch(url);
     return this.handleResponse(response, "getFollowing");
   }
@@ -342,7 +349,7 @@ export class XApiClient {
 
   async likeTweet(tweetId: string) {
     const userId = await this.getAuthenticatedUserId();
-    const response = await this.oauthFetch(`${API_BASE}/users/${userId}/likes`, "POST", {
+    const response = await this.oauthFetch(`${API_BASE}/users/${seg(userId)}/likes`, "POST", {
       tweet_id: tweetId,
     });
     return this.handleResponse(response, "likeTweet");
@@ -350,7 +357,7 @@ export class XApiClient {
 
   async retweet(tweetId: string) {
     const userId = await this.getAuthenticatedUserId();
-    const response = await this.oauthFetch(`${API_BASE}/users/${userId}/retweets`, "POST", {
+    const response = await this.oauthFetch(`${API_BASE}/users/${seg(userId)}/retweets`, "POST", {
       tweet_id: tweetId,
     });
     return this.handleResponse(response, "retweet");
@@ -440,14 +447,14 @@ export class XApiClient {
     });
     if (nextToken) params.set("pagination_token", nextToken);
 
-    const url = `${API_BASE}/users/${userId}/bookmarks?${params}`;
+    const url = `${API_BASE}/users/${seg(userId)}/bookmarks?${params}`;
     const response = await this.oauth2Fetch(url, "GET");
     return this.handleResponse(response, "getBookmarks");
   }
 
   async bookmarkTweet(tweetId: string) {
     const userId = await this.getAuthenticatedUserId();
-    const response = await this.oauth2Fetch(`${API_BASE}/users/${userId}/bookmarks`, "POST", {
+    const response = await this.oauth2Fetch(`${API_BASE}/users/${seg(userId)}/bookmarks`, "POST", {
       tweet_id: tweetId,
     });
     return this.handleResponse(response, "bookmarkTweet");
@@ -456,7 +463,7 @@ export class XApiClient {
   async unbookmarkTweet(tweetId: string) {
     const userId = await this.getAuthenticatedUserId();
     const response = await this.oauth2Fetch(
-      `${API_BASE}/users/${userId}/bookmarks/${tweetId}`,
+      `${API_BASE}/users/${seg(userId)}/bookmarks/${seg(tweetId)}`,
       "DELETE",
     );
     return this.handleResponse(response, "unbookmarkTweet");
@@ -468,7 +475,7 @@ export class XApiClient {
     const params = new URLSearchParams({
       "tweet.fields": "public_metrics,non_public_metrics,organic_metrics",
     });
-    const url = `${API_BASE}/tweets/${tweetId}?${params}`;
+    const url = `${API_BASE}/tweets/${seg(tweetId)}?${params}`;
     // Metrics require user context (OAuth 1.0a) for non_public_metrics
     const response = await this.oauthFetch(url, "GET");
     return this.handleResponse(response, "getTweetMetrics");
